@@ -1,4 +1,5 @@
 // ui/mod.rs — Master render dispatcher: fills the entire terminal with zero dead space
+pub mod analyze;
 pub mod benchmark;
 pub mod dashboard;
 pub mod footer;
@@ -81,6 +82,7 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
     header::render_header(frame, rows[0], app);
 
     match app.current_tab {
+        Tab::Analyze   => analyze::render_analyze(frame, rows[1], app),
         Tab::Dashboard => dashboard::render_dashboard(frame, rows[1], app),
         Tab::Benchmark => benchmark::render_benchmark(frame, rows[1], app),
         Tab::Sessions  => sessions::render_sessions(frame, rows[1], app),

@@ -10,15 +10,13 @@ use ratatui::{
 };
 
 pub fn render_help_modal(frame: &mut Frame, area: Rect, _app: &AppState) {
-    // Centre the modal: 70% wide, 80% tall, clamped to reasonable dimensions
     let modal_w = (area.width as f32 * 0.70).round() as u16;
-    let modal_h = (area.height as f32 * 0.80).round() as u16;
+    let modal_h = (area.height as f32 * 0.85).round() as u16;
     let x       = area.x + (area.width.saturating_sub(modal_w)) / 2;
     let y       = area.y + (area.height.saturating_sub(modal_h)) / 2;
 
     let modal_rect = Rect::new(x, y, modal_w, modal_h);
 
-    // Clear the background beneath the modal to prevent see-through artefacts
     frame.render_widget(Clear, modal_rect);
 
     let block = Block::default()
@@ -33,12 +31,11 @@ pub fn render_help_modal(frame: &mut Frame, area: Rect, _app: &AppState) {
     let inner = block.inner(modal_rect);
     frame.render_widget(block, modal_rect);
 
-    // Stack: 4 group tables separated by small gaps
     let sections = Layout::vertical([
         Constraint::Length(1),    // gap
         Constraint::Length(7),    // Navigation
         Constraint::Length(1),    // divider
-        Constraint::Length(6),    // Execution
+        Constraint::Length(6),    // File Analyzer & Recovery
         Constraint::Length(1),    // divider
         Constraint::Length(5),    // Session Controls
         Constraint::Length(1),    // divider
@@ -50,33 +47,36 @@ pub fn render_help_modal(frame: &mut Frame, area: Rect, _app: &AppState) {
     render_group(
         frame, sections[1], "⬡  NAVIGATION",
         &[
-            ("[1]",     "Switch to Dashboard tab"),
-            ("[2]",     "Switch to Benchmark tab"),
-            ("[3]",     "Switch to Sessions tab"),
-            ("[4]",     "Switch to System tab"),
-            ("[J / K] or [↑ / ↓]", "Move selection up / down"),
+            ("[1]",     "Tab 1: File Selector & Smart Decryption Analyzer"),
+            ("[2]",     "Tab 2: Live Worker & Throughput Dashboard"),
+            ("[3]",     "Tab 3: Multi-Core Cryptographic Benchmark Suite"),
+            ("[4]",     "Tab 4: Session Registry & Database"),
+            ("[5]",     "Tab 5: Host System Diagnostics & Hardware Flags"),
         ],
     );
 
     render_divider(frame, sections[2]);
 
     render_group(
-        frame, sections[3], "⬡  EXECUTION",
+        frame, sections[3], "⬡  FILE ANALYZER & RECOVERY LAUNCHER",
         &[
-            ("[Space]",  "Pause / Resume active cipher worker pipeline"),
-            ("[C]",      "Cancel active session — abort all worker threads"),
-            ("[B]",      "Run multi-threaded cryptographic benchmark suite"),
+            ("[J / K] or [↑ / ↓]", "Navigate file explorer & select target file"),
+            ("[Enter]",            "Open directory or launch decryption recovery"),
+            ("[A / Space]",        "Launch multi-threaded recovery attack pipeline"),
+            ("[Tab]",              "Cycle attack profile (Wordlist / Mask / Contextual)"),
+            ("[H / Backspace]",    "Navigate up to parent directory [..]"),
         ],
     );
 
     render_divider(frame, sections[4]);
 
     render_group(
-        frame, sections[5], "⬡  SESSION CONTROLS",
+        frame, sections[5], "⬡  EXECUTION CONTROLS",
         &[
+            ("[Space]",  "Pause / Resume active cipher worker pipeline"),
+            ("[C]",      "Cancel active session — abort all worker threads"),
+            ("[B]",      "Run multi-threaded cryptographic benchmark suite"),
             ("[/]",      "Activate search filter bar in Sessions view"),
-            ("[Enter]",  "Confirm search filter and close search bar"),
-            ("[Esc]",    "Dismiss search / close this help overlay"),
         ],
     );
 
@@ -90,11 +90,10 @@ pub fn render_help_modal(frame: &mut Frame, area: Rect, _app: &AppState) {
         ],
     );
 
-    // Footer tip
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                "  Tip: All key memory is securely zeroed on exit via mlock + explicit_bzero.",
+                "  Tip: Select any locked container (.zip, .pdf, .rar, .enc) in Tab 1 to auto-detect cipher.",
                 theme::style_dim(),
             ),
         ]))
@@ -105,12 +104,11 @@ pub fn render_help_modal(frame: &mut Frame, area: Rect, _app: &AppState) {
 
 fn render_group(frame: &mut Frame, area: Rect, title: &str, bindings: &[(&str, &str)]) {
     let rows = Layout::vertical([
-        Constraint::Length(1),    // group title
-        Constraint::Min(0),       // table
+        Constraint::Length(1),
+        Constraint::Min(0),
     ])
     .split(area);
 
-    // Group title line
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -137,8 +135,7 @@ fn render_group(frame: &mut Frame, area: Rect, title: &str, bindings: &[(&str, &
         .collect();
 
     let widths = [Constraint::Length(24), Constraint::Min(0)];
-    let table  = Table::new(table_rows, widths)
-        .column_spacing(2);
+    let table  = Table::new(table_rows, widths).column_spacing(2);
 
     frame.render_widget(table, rows[1]);
 }

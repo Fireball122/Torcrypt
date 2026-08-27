@@ -6,7 +6,7 @@ mod ui;
 use std::io;
 use std::time::{Duration, Instant};
 
-use app::AppState;
+use app::{AppState, Tab};
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
@@ -77,27 +77,51 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                         KeyCode::Enter if app.search_mode => {
                             app.search_mode = false;
                         }
+                        KeyCode::Enter if app.current_tab == Tab::Analyze => {
+                            if !app.dir_entries.is_empty() && app.file_selected_idx < app.dir_entries.len() {
+                                let entry = app.dir_entries[app.file_selected_idx].clone();
+                                if entry.is_dir {
+                                    app.current_dir = entry.path;
+                                    app.refresh_directory();
+                                } else if app.analysis.ready_to_crack {
+                                    app.launch_attack_from_analysis();
+                                }
+                            }
+                        }
                         KeyCode::Backspace if app.search_mode => {
                             app.search_query.pop();
                         }
+                        KeyCode::Backspace if app.current_tab == Tab::Analyze => {
+                            if let Some(parent) = app.current_dir.parent().map(|p| p.to_path_buf()) {
+                                app.current_dir = parent;
+                                app.refresh_directory();
+                            }
+                        }
+                        KeyCode::Tab if app.current_tab == Tab::Analyze => {
+                            app.attack_selected = (app.attack_selected + 1) % 3;
+                        }
                         KeyCode::Up => {
-                            if app.current_tab == app::Tab::Sessions
-                                && app.sessions_selected > 0
-                            {
+                            if app.current_tab == Tab::Analyze && app.file_selected_idx > 0 {
+                                app.file_selected_idx -= 1;
+                                app.analyze_selected_file();
+                            }
+                            if app.current_tab == Tab::Sessions && app.sessions_selected > 0 {
                                 app.sessions_selected -= 1;
                             }
-                            if app.current_tab == app::Tab::Benchmark
-                                && app.bench_selected > 0
-                            {
+                            if app.current_tab == Tab::Benchmark && app.bench_selected > 0 {
                                 app.bench_selected -= 1;
                             }
                         }
                         KeyCode::Down => {
-                            if app.current_tab == app::Tab::Sessions {
+                            if app.current_tab == Tab::Analyze && !app.dir_entries.is_empty() {
+                                app.file_selected_idx = (app.file_selected_idx + 1).min(app.dir_entries.len().saturating_sub(1));
+                                app.analyze_selected_file();
+                            }
+                            if app.current_tab == Tab::Sessions {
                                 app.sessions_selected = (app.sessions_selected + 1)
                                     .min(app.sessions.len().saturating_sub(1));
                             }
-                            if app.current_tab == app::Tab::Benchmark {
+                            if app.current_tab == Tab::Benchmark {
                                 app.bench_selected = (app.bench_selected + 1)
                                     .min(app.bench_results.len().saturating_sub(1));
                             }

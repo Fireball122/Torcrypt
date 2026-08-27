@@ -1,35 +1,41 @@
-// app.rs — TORCRYPT AppState: all data, routing, and ring-buffer telemetry
+// app.rs — TORCRYPT AppState: Routing, File Explorer & Smart Decryption Analyzer, Ring-Buffer Telemetry
 use std::collections::VecDeque;
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use chrono::Utc;
 
-// ─── Tab Routing ──────────────────────────────────────────────────────────────
+// ─── Tab Routing (5 Tabs) ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
-    Dashboard,
-    Benchmark,
-    Sessions,
-    System,
+    Analyze,   // [1] File Selector & Smart Decryption Analyzer
+    Dashboard, // [2] Live Worker & Throughput Monitor
+    Benchmark, // [3] Multi-Core Cryptographic Benchmarks
+    Sessions,  // [4] Session Registry & Database
+    System,    // [5] Host Diagnostics & HW Flags
 }
 
 impl Tab {
     pub fn index(self) -> usize {
         match self {
-            Tab::Dashboard => 0,
-            Tab::Benchmark => 1,
-            Tab::Sessions  => 2,
-            Tab::System    => 3,
+            Tab::Analyze   => 0,
+            Tab::Dashboard => 1,
+            Tab::Benchmark => 2,
+            Tab::Sessions  => 3,
+            Tab::System    => 4,
         }
     }
 
     pub fn from_index(i: usize) -> Self {
         match i {
-            0 => Tab::Dashboard,
-            1 => Tab::Benchmark,
-            2 => Tab::Sessions,
-            3 => Tab::System,
-            _ => Tab::Dashboard,
+            0 => Tab::Analyze,
+            1 => Tab::Dashboard,
+            2 => Tab::Benchmark,
+            3 => Tab::Sessions,
+            4 => Tab::System,
+            _ => Tab::Analyze,
         }
     }
 }
@@ -61,6 +67,49 @@ pub struct LogEntry {
     pub level:     LogLevel,
     pub path:      String,
     pub message:   String,
+}
+
+// ─── File Explorer & Smart Analysis Models ────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    pub path:         PathBuf,
+    pub name:         String,
+    pub is_dir:       bool,
+    pub size_bytes:   u64,
+    pub is_encrypted: bool,
+    pub badge:        String,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileAnalysis {
+    pub file_path:          String,
+    pub file_size:          u64,
+    pub mime_type:          String,
+    pub is_encrypted:       bool,
+    pub lock_type:          String,
+    pub entropy:            f64,
+    pub magic_header:       String,
+    pub recommended_attack: String,
+    pub ready_to_crack:     bool,
+    pub attack_profile_idx: usize, // 0: Wordlist, 1: Mask, 2: Contextual
+}
+
+impl Default for FileAnalysis {
+    fn default() -> Self {
+        Self {
+            file_path:          "No file selected".into(),
+            file_size:          0,
+            mime_type:          "N/A".into(),
+            is_encrypted:       false,
+            lock_type:          "None".into(),
+            entropy:            0.0,
+            magic_header:       "—".into(),
+            recommended_attack: "Select a file to inspect".into(),
+            ready_to_crack:     false,
+            attack_profile_idx: 0,
+        }
+    }
 }
 
 // ─── Session Registry ─────────────────────────────────────────────────────────
@@ -102,6 +151,13 @@ pub struct AppState {
     pub current_tab:        Tab,
     pub show_help:          bool,
 
+    // File Explorer & Smart Decryption Analyzer
+    pub current_dir:        PathBuf,
+    pub dir_entries:        Vec<FileEntry>,
+    pub file_selected_idx:  usize,
+    pub analysis:           FileAnalysis,
+    pub attack_selected:    usize, // 0: Wordlist+Rules, 1: Mask/Bruteforce, 2: Contextual
+
     // Worker
     pub worker_state:       WorkerState,
     pub cipher_suite:       String,
@@ -115,7 +171,7 @@ pub struct AppState {
     pub thread_active:      u8,
 
     // Telemetry (ring buffers, fixed capacity)
-    pub throughput_history: VecDeque<u64>,  // 60 samples
+    pub throughput_history: VecDeque<u64>,      // 60 samples
     pub log_ring:           VecDeque<LogEntry>, // 200 entries
 
     // Sessions
@@ -150,25 +206,33 @@ pub struct AppState {
 
 impl Default for AppState {
     fn default() -> Self {
-        let mut state = Self {
-            in_splash:        true,
-            splash_frame:     0,
-            splash_last_tick: Instant::now(),
+        let initial_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/home/ultaria"));
 
-            current_tab:      Tab::Dashboard,
-            show_help:        false,
+        let mut state = Self {
+            in_splash:          true,
+            splash_frame:       0,
+            splash_last_tick:   Instant::now(),
+
+            current_tab:        Tab::Analyze, // Tab 1 by default
+            show_help:          false,
+
+            current_dir:        initial_dir,
+            dir_entries:        Vec::new(),
+            file_selected_idx:  0,
+            analysis:           FileAnalysis::default(),
+            attack_selected:    0,
 
             // Clean IDLE / STANDBY startup state
-            worker_state:     WorkerState::Idle,
-            cipher_suite:     "—".into(),
-            target_path:      "No active target (Awaiting job)".into(),
-            items_done:       0,
-            items_total:      0,
-            elapsed_secs:     0.0,
-            eta_secs:         0.0,
-            speed_mbps:       0.0,
-            thread_count:     12,
-            thread_active:    0,
+            worker_state:       WorkerState::Idle,
+            cipher_suite:       "—".into(),
+            target_path:        "No active target (Select in [1] Analyze)".into(),
+            items_done:         0,
+            items_total:        0,
+            elapsed_secs:       0.0,
+            eta_secs:           0.0,
+            speed_mbps:         0.0,
+            thread_count:       12,
+            thread_active:      0,
 
             throughput_history: VecDeque::with_capacity(60),
             log_ring:           VecDeque::with_capacity(200),
@@ -198,22 +262,10 @@ impl Default for AppState {
                     memory_mb:    32,
                     threads:      8,
                 },
-                Session {
-                    id:           "SES-9794".into(),
-                    target:       "/opt/db_dump/customer_pii.zst".into(),
-                    cipher:       "AES-256-CTR".into(),
-                    kdf:          "PBKDF2-SHA512".into(),
-                    status:       "PAUSED".into(),
-                    created_at:   "2026-08-27 18:55".into(),
-                    keys_checked: 450_120,
-                    speed_mbps:   0.0,
-                    memory_mb:    48,
-                    threads:      6,
-                },
             ],
-            sessions_selected: 0,
-            search_mode:       false,
-            search_query:      String::new(),
+            sessions_selected:  0,
+            search_mode:        false,
+            search_query:       String::new(),
 
             bench_results: vec![
                 BenchResult { name: "AES-256-GCM (AVX2)".into(),   single_mb: 720,  multi_mb: 1450, latency_us: 0.69, hw_accel: true  },
@@ -222,24 +274,24 @@ impl Default for AppState {
                 BenchResult { name: "XChaCha20-Poly1305".into(),    single_mb: 490,  multi_mb: 980,  latency_us: 1.02, hw_accel: true  },
                 BenchResult { name: "Argon2id (16MB Cost)".into(),  single_mb: 170,  multi_mb: 340,  latency_us: 5.88, hw_accel: false },
             ],
-            bench_selected:  0,
-            bench_running:   false,
-            bench_progress:  0,
+            bench_selected:     0,
+            bench_running:      false,
+            bench_progress:     0,
 
-            sys_os:        "Linux x86_64 (Debian 13 / Trixie)".into(),
-            sys_kernel:    "6.12.74-amd64 SMP PREEMPT_DYNAMIC".into(),
-            sys_arch:      "x86_64".into(),
-            sys_cpu:       "Intel Celeron J4105 @ 1.50GHz (4C/4T)".into(),
-            sys_rustc:     "rustc 1.98.0 (88d9e12ae)".into(),
-            cpu_usage_pct: 12,
-            ram_used_gb:   4.2,
-            ram_total_gb:  32.0,
-            aes_ni:        true,
-            avx2:          true,
-            rdrand:        true,
-            vaes512:       false,
+            sys_os:             "Linux x86_64 (Debian 13 / Trixie)".into(),
+            sys_kernel:         "6.12.74-amd64 SMP PREEMPT_DYNAMIC".into(),
+            sys_arch:           "x86_64".into(),
+            sys_cpu:            "Intel Celeron J4105 @ 1.50GHz (4C/4T)".into(),
+            sys_rustc:          "rustc 1.98.0 (88d9e12ae)".into(),
+            cpu_usage_pct:      12,
+            ram_used_gb:        4.2,
+            ram_total_gb:       32.0,
+            aes_ni:             true,
+            avx2:               true,
+            rdrand:             true,
+            vaes512:            false,
 
-            tick: 0,
+            tick:               0,
         };
 
         // Fill initial 60 throughput slots with 0 MB/s
@@ -250,13 +302,152 @@ impl Default for AppState {
         // Clean initial startup logs
         state.add_log(LogLevel::Info, "", "Hardware cryptographic acceleration active (AES-NI / AVX2)");
         state.add_log(LogLevel::Info, "", "Torcrypt engine initialized — STANDBY mode");
-        state.add_log(LogLevel::Info, "", "Awaiting job dispatch or benchmark execution ([B] to benchmark)");
+        state.add_log(LogLevel::Info, "", "Smart container analyzer active — browse and select target in Tab 1");
+
+        // Load initial directory listing
+        state.refresh_directory();
 
         state
     }
 }
 
 impl AppState {
+    // ── Directory Refresh & Navigation ───────────────────────────────────────
+
+    pub fn refresh_directory(&mut self) {
+        let mut entries: Vec<FileEntry> = Vec::new();
+
+        // 1. Add parent directory entry if not at filesystem root
+        if self.current_dir.parent().is_some() {
+            entries.push(FileEntry {
+                path:         self.current_dir.parent().unwrap().to_path_buf(),
+                name:         ".. (Parent Directory)".into(),
+                is_dir:       true,
+                size_bytes:   0,
+                is_encrypted: false,
+                badge:        "📁 [DIR]".into(),
+            });
+        }
+
+        // 2. Read current directory entries
+        if let Ok(read_dir) = fs::read_dir(&self.current_dir) {
+            let mut dirs: Vec<FileEntry> = Vec::new();
+            let mut files: Vec<FileEntry> = Vec::new();
+
+            for entry_res in read_dir.flatten() {
+                let path = entry_res.path();
+                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+
+                if name.starts_with('.') && name != ".." {
+                    continue;
+                }
+
+                if let Ok(meta) = entry_res.metadata() {
+                    if meta.is_dir() {
+                        dirs.push(FileEntry {
+                            path,
+                            name,
+                            is_dir:       true,
+                            size_bytes:   0,
+                            is_encrypted: false,
+                            badge:        "📁 [DIR]".into(),
+                        });
+                    } else {
+                        let size = meta.len();
+                        let (badge, is_enc) = detect_file_badge(&path, &name);
+                        files.push(FileEntry {
+                            path,
+                            name,
+                            is_dir:       false,
+                            size_bytes:   size,
+                            is_encrypted: is_enc,
+                            badge,
+                        });
+                    }
+                }
+            }
+
+            dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+            entries.extend(dirs);
+            entries.extend(files);
+        }
+
+        self.dir_entries = entries;
+        if self.file_selected_idx >= self.dir_entries.len() {
+            self.file_selected_idx = 0;
+        }
+
+        self.analyze_selected_file();
+    }
+
+    // ── Smart Magic-Byte Container Analysis ──────────────────────────────────
+
+    pub fn analyze_selected_file(&mut self) {
+        if self.dir_entries.is_empty() || self.file_selected_idx >= self.dir_entries.len() {
+            self.analysis = FileAnalysis::default();
+            return;
+        }
+
+        let entry = &self.dir_entries[self.file_selected_idx];
+        if entry.is_dir {
+            self.analysis = FileAnalysis {
+                file_path:          entry.path.to_string_lossy().to_string(),
+                file_size:          0,
+                mime_type:          "Directory / Folder".into(),
+                is_encrypted:       false,
+                lock_type:          "Unencrypted Directory".into(),
+                entropy:            0.0,
+                magic_header:       "N/A".into(),
+                recommended_attack: "Press [Enter] to enter directory".into(),
+                ready_to_crack:     false,
+                attack_profile_idx: 0,
+            };
+            return;
+        }
+
+        self.analysis = analyze_file_magic(&entry.path, entry.size_bytes);
+    }
+
+    // ── Launch Attack from Tab 1 ──────────────────────────────────────────────
+
+    pub fn launch_attack_from_analysis(&mut self) {
+        if !self.analysis.ready_to_crack {
+            return;
+        }
+
+        self.target_path   = self.analysis.file_path.clone();
+        self.cipher_suite  = self.analysis.lock_type.clone();
+        self.worker_state  = WorkerState::Running;
+        self.items_done    = 0;
+        self.items_total   = 14_344_392; // Standard dictionary size (e.g. RockYou)
+        self.elapsed_secs  = 0.0;
+        self.eta_secs      = 120.0;
+        self.speed_mbps    = 428.5;
+        self.thread_active = self.thread_count;
+
+        let attack_name = match self.attack_selected {
+            0 => "Dictionary + Hashcat Rule Engine",
+            1 => "Mask / Brute-Force Matrix (?u?l?l?d?d)",
+            2 => "Contextual Metadata Attack (Username/Host/Year)",
+            _ => "Standard Wordlist Attack",
+        };
+
+        let path_clone = self.target_path.clone();
+        let cipher_clone = self.cipher_suite.clone();
+
+        self.add_log(
+            LogLevel::Lock,
+            &path_clone,
+            &format!("Opened target container: {} │ Strategy: {}", cipher_clone, attack_name),
+        );
+        self.add_log(LogLevel::Info, "", "Dispatched task to 12 CPU worker threads (AVX2 SIMD)");
+
+        // Auto-switch to Tab 2 (Dashboard) to watch live progress
+        self.current_tab = Tab::Dashboard;
+    }
+
     // ── Public Mutation Interface ────────────────────────────────────────────
 
     pub fn add_log(&mut self, level: LogLevel, path: &str, msg: &str) {
@@ -313,7 +504,9 @@ impl AppState {
             self.speed_mbps = (428.5 + jitter).max(400.0);
 
             if self.items_done < self.items_total {
-                self.items_done = (self.items_done + 3).min(self.items_total);
+                self.items_done = (self.items_done + 4).min(self.items_total);
+                self.elapsed_secs += 0.033;
+                self.eta_secs = ((self.items_total - self.items_done) as f64 / 120.0).max(0.0);
             }
 
             if self.tick % 2 == 0 {
@@ -321,11 +514,11 @@ impl AppState {
                 self.push_throughput(mb);
             }
 
-            if self.tick % 15 == 0 {
-                self.add_log(LogLevel::Info, "/chunks/part_031.bin", "Block stream verified authentic");
+            if self.tick % 30 == 0 {
+                let path_clone = self.target_path.clone();
+                self.add_log(LogLevel::Info, &path_clone, "Candidate block verified authentic — hashing candidate batch");
             }
         } else {
-            // In Idle / Paused / Stopped state, throughput is 0
             if self.tick % 2 == 0 {
                 self.push_throughput(0);
             }
@@ -355,16 +548,36 @@ impl AppState {
             }
             return;
         }
+
         match c {
-            '1' => self.current_tab = Tab::Dashboard,
-            '2' => self.current_tab = Tab::Benchmark,
-            '3' => self.current_tab = Tab::Sessions,
-            '4' => self.current_tab = Tab::System,
+            '1' => self.current_tab = Tab::Analyze,
+            '2' => self.current_tab = Tab::Dashboard,
+            '3' => self.current_tab = Tab::Benchmark,
+            '4' => self.current_tab = Tab::Sessions,
+            '5' => self.current_tab = Tab::System,
             '?' => self.show_help = !self.show_help,
             'q' | 'Q' => {} // handled in main
+
+            // Tab 1 Actions: Launch Attack / Cycle Strategy / Directory Navigation
+            'a' | 'A' if self.current_tab == Tab::Analyze => {
+                self.launch_attack_from_analysis();
+            }
+            '\t' if self.current_tab == Tab::Analyze => {
+                // Cycle attack strategy
+                self.attack_selected = (self.attack_selected + 1) % 3;
+            }
+            'h' | 'H' if self.current_tab == Tab::Analyze => {
+                // Go to parent directory
+                if let Some(parent) = self.current_dir.parent().map(|p| p.to_path_buf()) {
+                    self.current_dir = parent;
+                    self.refresh_directory();
+                }
+            }
+
             ' ' => {
-                // Toggle between Paused and Running if a job exists
-                if self.worker_state == WorkerState::Running {
+                if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack {
+                    self.launch_attack_from_analysis();
+                } else if self.worker_state == WorkerState::Running {
                     self.worker_state = WorkerState::Paused;
                     self.add_log(LogLevel::Warn, "", "Worker pipeline PAUSED by user");
                 } else if self.worker_state == WorkerState::Paused {
@@ -394,16 +607,22 @@ impl AppState {
                 }
             }
             'j' | 'J' => {
+                if self.current_tab == Tab::Analyze && !self.dir_entries.is_empty() {
+                    self.file_selected_idx = (self.file_selected_idx + 1).min(self.dir_entries.len().saturating_sub(1));
+                    self.analyze_selected_file();
+                }
                 if self.current_tab == Tab::Sessions {
-                    self.sessions_selected =
-                        (self.sessions_selected + 1).min(self.sessions.len().saturating_sub(1));
+                    self.sessions_selected = (self.sessions_selected + 1).min(self.sessions.len().saturating_sub(1));
                 }
                 if self.current_tab == Tab::Benchmark {
-                    self.bench_selected =
-                        (self.bench_selected + 1).min(self.bench_results.len().saturating_sub(1));
+                    self.bench_selected = (self.bench_selected + 1).min(self.bench_results.len().saturating_sub(1));
                 }
             }
             'k' | 'K' => {
+                if self.current_tab == Tab::Analyze && self.file_selected_idx > 0 {
+                    self.file_selected_idx -= 1;
+                    self.analyze_selected_file();
+                }
                 if self.current_tab == Tab::Sessions && self.sessions_selected > 0 {
                     self.sessions_selected -= 1;
                 }
@@ -431,5 +650,174 @@ impl AppState {
                     || s.status.to_lowercase().contains(&q)
             })
             .collect()
+    }
+}
+
+// ─── File Magic Detection & Entropy Calculation ───────────────────────────────
+
+fn detect_file_badge(path: &Path, name: &str) -> (String, bool) {
+    let lower = name.to_lowercase();
+    if lower.ends_with(".zip") {
+        ("🔒 [ZIP]".into(), true)
+    } else if lower.ends_with(".pdf") {
+        ("📄 [PDF]".into(), true)
+    } else if lower.ends_with(".rar") {
+        ("📦 [RAR]".into(), true)
+    } else if lower.ends_with(".docx") || lower.ends_with(".xlsx") || lower.ends_with(".pptx") {
+        ("📊 [DOC]".into(), true)
+    } else if lower.ends_with(".enc") || lower.ends_with(".aes") || lower.ends_with(".vault") {
+        ("🔐 [ENC]".into(), true)
+    } else if lower.ends_with(".hash") || lower.ends_with(".txt") {
+        ("🔑 [TXT]".into(), false)
+    } else {
+        ("📄 [FILE]".into(), false)
+    }
+}
+
+fn calculate_shannon_entropy(bytes: &[u8]) -> f64 {
+    if bytes.is_empty() { return 0.0; }
+    let mut counts = [0usize; 256];
+    for &b in bytes { counts[b as usize] += 1; }
+    let total = bytes.len() as f64;
+    let mut entropy = 0.0;
+    for &c in &counts {
+        if c > 0 {
+            let p = c as f64 / total;
+            entropy -= p * p.log2();
+        }
+    }
+    entropy
+}
+
+fn analyze_file_magic(path: &Path, size_bytes: u64) -> FileAnalysis {
+    let mut file = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => {
+            return FileAnalysis {
+                file_path: path.to_string_lossy().to_string(),
+                file_size: size_bytes,
+                mime_type: "Permission Denied / Unreadable".into(),
+                is_encrypted: false,
+                lock_type: "Unreadable File".into(),
+                entropy: 0.0,
+                magic_header: "N/A".into(),
+                recommended_attack: "Check file permissions".into(),
+                ready_to_crack: false,
+                attack_profile_idx: 0,
+            };
+        }
+    };
+
+    let mut buf = [0u8; 4096];
+    let bytes_read = file.read(&mut buf).unwrap_or(0);
+    let slice = &buf[..bytes_read];
+
+    let entropy = calculate_shannon_entropy(slice);
+    let hex_header = slice.iter().take(8).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+
+    let filename = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+
+    // 1. ZIP Inspection (PK\x03\x04)
+    if slice.len() >= 8 && slice.starts_with(b"PK\x03\x04") {
+        let flags = u16::from_le_bytes([slice[6], slice[7]]);
+        let is_encrypted = (flags & 0x0001) != 0;
+
+        let has_winzip_aes = slice.windows(4).any(|w| w == [0x01, 0x99, 0x07, 0x00] || w == [0x01, 0x99]);
+        let lock_type = if is_encrypted {
+            if has_winzip_aes {
+                "WinZip AES-256 (PBKDF2-HMAC-SHA1, 1000 iter)".to_string()
+            } else {
+                "ZipCrypto Standard (PKWARE Traditional 96-bit)".to_string()
+            }
+        } else {
+            "Plaintext ZIP Archive (Not Encrypted)".to_string()
+        };
+
+        return FileAnalysis {
+            file_path: path.to_string_lossy().to_string(),
+            file_size: size_bytes,
+            mime_type: "application/zip (Archive Container)".into(),
+            is_encrypted,
+            lock_type,
+            entropy,
+            magic_header: format!("PK 03 04 ({})", hex_header),
+            recommended_attack: if is_encrypted {
+                "Standard Wordlist + Hashcat Rules (rockyou.txt)"
+            } else {
+                "No decryption required (archive is unencrypted)"
+            }.into(),
+            ready_to_crack: is_encrypted,
+            attack_profile_idx: 0,
+        };
+    }
+
+    // 2. PDF Document (%PDF-)
+    if slice.starts_with(b"%PDF-") {
+        let is_encrypted = slice.windows(8).any(|w| w == b"/Encrypt") || filename.ends_with(".pdf");
+        return FileAnalysis {
+            file_path: path.to_string_lossy().to_string(),
+            file_size: size_bytes,
+            mime_type: "application/pdf (Adobe Document)".into(),
+            is_encrypted,
+            lock_type: if is_encrypted { "PDF Standard Security Handler ($pdf$ AES-128/256)".into() } else { "Plaintext PDF Document".into() },
+            entropy,
+            magic_header: format!("%PDF-1.x ({})", hex_header),
+            recommended_attack: if is_encrypted {
+                "Wordlist + Digit Mask (?u?l?l?d?d?d)"
+            } else {
+                "Document is not password protected"
+            }.into(),
+            ready_to_crack: is_encrypted,
+            attack_profile_idx: 1,
+        };
+    }
+
+    // 3. RAR Archive (Rar!\x1A\x07)
+    if slice.starts_with(b"Rar!\x1A\x07") {
+        let is_rar5 = slice.len() >= 8 && slice[6] == 0x01 && slice[7] == 0x00;
+        let lock_type = if is_rar5 { "RAR5 Archive Encrypted ($rar5$ PBKDF2-SHA256)" } else { "RAR4 Archive Encrypted ($rar3$ AES-128)" };
+        return FileAnalysis {
+            file_path: path.to_string_lossy().to_string(),
+            file_size: size_bytes,
+            mime_type: "application/x-rar-compressed".into(),
+            is_encrypted: true,
+            lock_type: lock_type.into(),
+            entropy,
+            magic_header: format!("Rar! 1A 07 ({})", hex_header),
+            recommended_attack: "Hybrid Dictionary + Suffix Mask Attack".into(),
+            ready_to_crack: true,
+            attack_profile_idx: 0,
+        };
+    }
+
+    // 4. Raw AES / High-Entropy Encrypted Binary
+    if entropy > 7.80 || filename.ends_with(".enc") || filename.ends_with(".aes") || filename.ends_with(".vault") {
+        return FileAnalysis {
+            file_path: path.to_string_lossy().to_string(),
+            file_size: size_bytes,
+            mime_type: "application/octet-stream (Raw Encrypted Vault)".into(),
+            is_encrypted: true,
+            lock_type: "AES-256-GCM / Argon2id Key Derivation".into(),
+            entropy,
+            magic_header: hex_header,
+            recommended_attack: "Multi-Threaded Vectorized SIMD Brute-Force".into(),
+            ready_to_crack: true,
+            attack_profile_idx: 0,
+        };
+    }
+
+    // 5. Default Plaintext / Hash File
+    let is_txt = filename.ends_with(".txt") || filename.ends_with(".hash");
+    FileAnalysis {
+        file_path: path.to_string_lossy().to_string(),
+        file_size: size_bytes,
+        mime_type: if is_txt { "text/plain (Candidate / Hash List)".into() } else { "application/octet-stream".into() },
+        is_encrypted: false,
+        lock_type: "Unencrypted / Plaintext Data".into(),
+        entropy,
+        magic_header: hex_header,
+        recommended_attack: "Use as Dictionary / Wordlist source".into(),
+        ready_to_crack: false,
+        attack_profile_idx: 0,
     }
 }

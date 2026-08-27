@@ -1,4 +1,4 @@
-// ui/header.rs — Branded badge | Tab pills | Live UTC clock & engine status
+// ui/header.rs — Branded badge | 5-Tab selector pills | Live UTC clock & engine status
 use crate::app::{AppState, Tab, WorkerState};
 use crate::ui::theme;
 use chrono::Utc;
@@ -11,7 +11,6 @@ use ratatui::{
 };
 
 pub fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppState) {
-    // Outer block gives the header its rounded border frame
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -21,9 +20,9 @@ pub fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
 
     // Split inner row into: [brand badge] [tab pills] [status + clock]
     let cols = Layout::horizontal([
-        Constraint::Length(20),   // brand badge
+        Constraint::Length(18),   // brand badge
         Constraint::Min(0),       // tab pills (center)
-        Constraint::Length(30),   // clock + status
+        Constraint::Length(28),   // clock + status
     ])
     .split(inner);
 
@@ -36,7 +35,7 @@ pub fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
     .alignment(Alignment::Left);
     frame.render_widget(badge, cols[0]);
 
-    // ── Center: Tab Pills ─────────────────────────────────────────────────────
+    // ── Center: 5-Tab Selector Pills ──────────────────────────────────────────
     fn tab_span(label: &str, tab: Tab, current: Tab) -> Span<'static> {
         let text = format!(" {label} ");
         let label_owned = text.clone();
@@ -59,14 +58,15 @@ pub fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
     }
 
     let tab_line = Line::from(vec![
+        tab_span("[1] Analyze",   Tab::Analyze,   app.current_tab),
         Span::raw(" "),
-        tab_span("[1] Dashboard", Tab::Dashboard, app.current_tab),
+        tab_span("[2] Dashboard", Tab::Dashboard, app.current_tab),
         Span::raw(" "),
-        tab_span("[2] Benchmark", Tab::Benchmark, app.current_tab),
+        tab_span("[3] Benchmark", Tab::Benchmark, app.current_tab),
         Span::raw(" "),
-        tab_span("[3] Sessions",  Tab::Sessions,  app.current_tab),
+        tab_span("[4] Sessions",  Tab::Sessions,  app.current_tab),
         Span::raw(" "),
-        tab_span("[4] System",    Tab::System,    app.current_tab),
+        tab_span("[5] System",    Tab::System,    app.current_tab),
     ]);
 
     let tabs = Paragraph::new(tab_line).alignment(Alignment::Center);
@@ -85,7 +85,7 @@ pub fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
 
     let right_line = Line::from(vec![
         Span::styled(status_icon, status_style.add_modifier(Modifier::BOLD)),
-        Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
         Span::styled(now, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
     ]);
