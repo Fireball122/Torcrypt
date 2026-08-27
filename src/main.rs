@@ -33,8 +33,8 @@ fn main() -> io::Result<()> {
 }
 
 fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
-    let mut app     = AppState::default();
-    let tick_rate   = Duration::from_millis(33); // 30 FPS
+    let mut app       = AppState::default();
+    let tick_rate     = Duration::from_millis(33); // 30 FPS
     let mut last_tick = Instant::now();
 
     loop {
@@ -53,6 +53,17 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                             _ => {}
                         }
                     }
+
+                    // 1. If in splash animation, any key dismisses splash
+                    if app.in_splash {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(()),
+                            _ => { app.in_splash = false; }
+                        }
+                        continue;
+                    }
+
+                    // 2. Main keyboard handling
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Char('Q')
                             if !app.search_mode && !app.show_help =>

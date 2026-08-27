@@ -1,5 +1,6 @@
 // app.rs — TORCRYPT AppState: all data, routing, and ring-buffer telemetry
 use std::collections::VecDeque;
+use std::time::Instant;
 use chrono::Utc;
 
 // ─── Tab Routing ──────────────────────────────────────────────────────────────
@@ -65,16 +66,16 @@ pub struct LogEntry {
 
 #[derive(Debug, Clone)]
 pub struct Session {
-    pub id:          String,
-    pub target:      String,
-    pub cipher:      String,
-    pub kdf:         String,
-    pub status:      String,
-    pub created_at:  String,
+    pub id:           String,
+    pub target:       String,
+    pub cipher:       String,
+    pub kdf:          String,
+    pub status:       String,
+    pub created_at:   String,
     pub keys_checked: u64,
-    pub speed_mbps:  f64,
-    pub memory_mb:   u32,
-    pub threads:     u8,
+    pub speed_mbps:   f64,
+    pub memory_mb:    u32,
+    pub threads:      u8,
 }
 
 // ─── Benchmark Results ────────────────────────────────────────────────────────
@@ -91,21 +92,26 @@ pub struct BenchResult {
 // ─── AppState ────────────────────────────────────────────────────────────────
 
 pub struct AppState {
+    // Startup Splash Animation
+    pub in_splash:          bool,
+    pub splash_frame:       usize,
+    pub splash_last_tick:   Instant,
+
     // Routing
-    pub current_tab:    Tab,
-    pub show_help:      bool,
+    pub current_tab:        Tab,
+    pub show_help:          bool,
 
     // Worker
-    pub worker_state:   WorkerState,
-    pub cipher_suite:   String,
-    pub target_path:    String,
-    pub items_done:     u64,
-    pub items_total:    u64,
-    pub elapsed_secs:   f64,
-    pub eta_secs:       f64,
-    pub speed_mbps:     f64,
-    pub thread_count:   u8,
-    pub thread_active:  u8,
+    pub worker_state:       WorkerState,
+    pub cipher_suite:       String,
+    pub target_path:        String,
+    pub items_done:         u64,
+    pub items_total:        u64,
+    pub elapsed_secs:       f64,
+    pub eta_secs:           f64,
+    pub speed_mbps:         f64,
+    pub thread_count:       u8,
+    pub thread_active:      u8,
 
     // Telemetry (ring buffers, fixed capacity)
     pub throughput_history: VecDeque<u64>,  // 60 samples
@@ -144,19 +150,23 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         let mut state = Self {
-            current_tab:   Tab::Dashboard,
-            show_help:     false,
+            in_splash:        true,
+            splash_frame:     0,
+            splash_last_tick: Instant::now(),
 
-            worker_state:  WorkerState::Running,
-            cipher_suite:  "AES-256-GCM".into(),
-            target_path:   "/var/vaults/secure_payload.enc".into(),
-            items_done:    14_892,
-            items_total:   25_000,
-            elapsed_secs:  142.0,
-            eta_secs:      96.0,
-            speed_mbps:    428.5,
-            thread_count:  12,
-            thread_active: 12,
+            current_tab:      Tab::Dashboard,
+            show_help:        false,
+
+            worker_state:     WorkerState::Running,
+            cipher_suite:     "AES-256-GCM".into(),
+            target_path:      "/var/vaults/secure_payload.enc".into(),
+            items_done:       14_892,
+            items_total:      25_000,
+            elapsed_secs:     142.0,
+            eta_secs:         96.0,
+            speed_mbps:       428.5,
+            thread_count:     12,
+            thread_active:    12,
 
             throughput_history: VecDeque::with_capacity(60),
             log_ring:           VecDeque::with_capacity(200),
@@ -304,7 +314,23 @@ impl AppState {
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
 
-        // Simulate live telemetry changes
+        // 1. Advance splash screen animation if active
+        if self.in_splash {
+            static FRAME_DELAYS_MS: [u64; 13] = [
+                500, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 1000
+            ];
+            let delay_ms = FRAME_DELAYS_MS[self.splash_frame.min(12)];
+            if self.splash_last_tick.elapsed().as_millis() as u64 >= delay_ms {
+                self.splash_frame += 1;
+                self.splash_last_tick = Instant::now();
+                if self.splash_frame >= 13 {
+                    self.in_splash = false;
+                }
+            }
+            return;
+        }
+
+        // 2. Main View Telemetry Updates
         let jitter = (self.tick % 7) as f64 * 2.5 - 8.0;
         self.speed_mbps = (428.5 + jitter).max(400.0);
 
@@ -343,6 +369,12 @@ impl AppState {
     }
 
     pub fn on_key_char(&mut self, c: char) {
+        if self.in_splash {
+            // Any key skips the splash animation into main view
+            self.in_splash = false;
+            return;
+        }
+
         if self.search_mode {
             match c {
                 '\x08' | '\x7f' => { self.search_query.pop(); }

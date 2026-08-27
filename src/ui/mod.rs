@@ -5,6 +5,7 @@ pub mod footer;
 pub mod header;
 pub mod help;
 pub mod sessions;
+pub mod splash;
 pub mod system;
 
 use crate::app::{AppState, Tab};
@@ -59,10 +60,17 @@ pub mod theme {
     }
 }
 
-/// Top-level render: header (3 lines) + content + footer (1 line). Zero dead space.
+/// Top-level render: splash screen or header + content + footer. Zero dead space.
 pub fn render(frame: &mut Frame, app: &mut AppState) {
     let area = frame.area();
 
+    // 1. If in startup splash mode, render splash animation across full screen
+    if app.in_splash {
+        splash::render_splash(frame, area, app);
+        return;
+    }
+
+    // 2. Main 3-Zone View
     let rows = Layout::vertical([
         Constraint::Length(3),          // header
         Constraint::Min(0),             // content (fills everything)
