@@ -1,0 +1,15 @@
+[package]
+name        = "torcrypt-tui"
+version     = "0.1.0"
+edition     = "2021"
+description = "TORCRYPT — Zero-Dead-Space Cyberpunk TUI (Ratatui + Crossterm)"
+
+[[bin]]
+name = "torcrypt-tui"
+path = "src/main.rs"
+
+[dependencies]
+ratatui   = { version = "0.29", features = ["crossterm"] }
+crossterm = "0.28"
+chrono    = { version = "0.4", features = ["clock"] }
+rand      = "0.8"
