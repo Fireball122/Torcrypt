@@ -1,111 +1,102 @@
-// ui/splash.rs — 13-Frame Padlock Unlock Animation & TORCRYPT ASCII Banner
+// ui/splash.rs — 1:1 Direct Port of TORCRYPT C++ 13-Frame Padlock Animation
 use crate::app::AppState;
 use ratatui::{
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
 };
 
+static BANNER: [&str; 6] = [
+    r#" _____   ___   ____      ______   _____   __   __  ____    _____ "#,
+    r#"|_   _| / _ \  |  _ \   / _____| |  __ \  \ \ / / /  __ \ |_____|"#,
+    r#"  | |  | | | | | |_) |  | |      | |__) |  \ V /  | |__) |  | |  "#,
+    r#"  | |  | | | | |  _ <   | |      |  _  /    > <   |  ___/   | |  "#,
+    r#"  | |  | |_| | | | \ \  | \____  | | \ \   / /    | |       | | "#,
+    r#"  |_|   \___/  |_|  \_\  \_____| |_|  \_\ /_/     |_|       |_|"#,
+];
+
+static FRAMES: [&str; 13] = [
+    "     .--------.\n    / .------. \\\n   / /        \\ \\\n   | |        | |\n  _| |________| |_\n.' |_|        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "     .--------.\n    / .------. \\\n   / /        \\ \\\n   | |        | |\n   | |        | |\n  _| |________| |_\n.' |_|        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "     .--------.\n    / .------. \\\n   / /        \\ \\\n   | |        | |\n   | |        | |\n   | |        | |\n  _|_|________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "     .--------.\n    / .------. \\\n   / /        \\ \\\n   | |        | |\n   | |        | |\n   | |        | |\n   |_|        | |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "       .------.\n      / .----. \\\n     / /      \\ \\\n     | |      | |\n     | |      | |\n     | |      | |\n     |_|      | |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "         .----.\n        / .--. \\\n       / /    \\ \\\n       | |    | |\n       | |    | |\n       | |    | |\n       |_|    | |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "           .--.\n          / .-. \\\n         / /   \\ \\\n         | |   | |\n         | |   | |\n         | |   | |\n         |_|   | |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "             ..\n            /  \\\n           / /\\ \\\n           |||| |\n           |||| |\n           |||| |\n           |_|| |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "              ..\n              ||\n             /  \\\n             |  |\n             |  |\n             |  |\n             |  |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "                .--.\n               / .. \\\n              / /  \\ \\\n              | |  | |\n              | |  | |\n              | |  | |\n              | |  |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "               .------.\n              / .----. \\\n             / /      \\ \\\n             | |      | |\n             | |      | |\n             | |      | |\n             | |      |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "                .------.\n               / .----. \\\n              / /      \\ \\\n              | |      | |\n              | |      | |\n              | |      | |\n              | |      |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+    "                .--------.\n               / .------. \\\n              / /        \\ \\\n              | |        | |\n              | |        | |\n              | |        | |\n              | |        |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
+
+];
+
 pub fn render_splash(frame: &mut Frame, area: Rect, app: &AppState) {
-    static BANNER: [&str; 6] = [
-        " _____   ___   ____      ______   _____   __   __  ____    _____ ",
-        "|_   _| / _ \\  |  _ \\   / _____| |  __ \\  \\ \\ / / /  __ \\ |_____|",
-        "  | |  | | | | | |_) |  | |      | |__) |  \\ V /  | |__) |  | |  ",
-        "  | |  | | | | |  _ <   | |      |  _  /    > <   |  ___/   | |  ",
-        "  | |  | |_| | | | \\ \\  | \\____  | | \\ \\   / /    | |       | | ",
-        "  |_|   \\___/  |_|  \\_\\  \\_____| |_|  \\_\\ /_/     |_|       |_|",
-    ];
+    let width  = area.width as usize;
+    let height = area.height as usize;
 
-    static FRAMES: [&str; 13] = [
-        "     .--------.\n    / .------. \\\n   / /        \\ \\\n   | |        | |\n  _| |________| |_\n.' |_|        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "     .--------.\n    / .------. \\\n   / /        \\ \\\n   | |        | |\n   | |        | |\n  _| |________| |_\n.' |_|        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "     .--------.\n    / .------. \\\n   / /        \\ \\\n   | |        | |\n   | |        | |\n   | |        | |\n  _|_|________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "     .--------.\n    / .------. \\\n   / /        \\ \\\n   | |        | |\n   | |        | |\n   | |        | |\n   |_|        | |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "       .------.\n      / .----. \\\n     / /      \\ \\\n     | |      | |\n     | |      | |\n     | |      | |\n     |_|      | |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "         .----.\n        / .--. \\\n       / /    \\ \\\n       | |    | |\n       | |    | |\n       | |    | |\n       |_|    | |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "           .--.\n          / .-. \\\n         / /   \\ \\\n         | |   | |\n         | |   | |\n         | |   | |\n         |_|   | |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "             ..\n            /  \\\n           / /\\ \\\n           |||| |\n           |||| |\n           |||| |\n           |_|| |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "              ..\n              ||\n             /  \\\n             |  |\n             |  |\n             |  |\n             |  |\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "                .--.\n               / .. \\\n              / /  \\ \\\n              | |  | |\n              | |  | |\n              | |  | |\n              | |  |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "               .------.\n              / .----. \\\n             / /      \\ \\\n             | |      | |\n             | |      | |\n             | |      | |\n             | |      |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "                .------.\n               / .----. \\\n              / /      \\ \\\n              | |      | |\n              | |      | |\n              | |      | |\n              | |      |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-        "                .--------.\n               / .------. \\\n              / /        \\ \\\n              | |        | |\n              | |        | |\n              | |        | |\n              | |        |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-    ];
+    let f = app.splash_frame.min(12);
 
-    let frame_idx = app.splash_frame.min(12);
-    let is_unlocked = frame_idx == 12;
+    // Split frame into lines
+    let raw_frame = FRAMES[f];
+    let mut art_lines: Vec<&str> = raw_frame.lines().collect();
 
-    let color = if is_unlocked {
+    // Pad art lines at the top to 16 lines (keeps lock body pinned to the baseline)
+    while art_lines.len() < 16 {
+        art_lines.insert(0, "");
+    }
+
+    let color = if f == 12 {
         Color::Green
     } else {
         Color::Yellow
     };
-
     let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
 
-    let status_text = if is_unlocked {
+    let status = if f == 12 {
         "[ DECRYPTED ]".to_string()
     } else {
-        let dots = (frame_idx % 3) + 1;
+        let dots = (f % 3) + 1;
         format!("[ DECRYPTING{} ]", ".".repeat(dots))
     };
 
-    let lock_art = FRAMES[frame_idx];
-    let lock_lines: Vec<&str> = lock_art.lines().collect();
+    let k_banner_width = 65usize;
+    let k_banner_height = 6usize;
+    let k_lock_body_width = 20usize;
 
-    // Total content height: 6 (banner) + 1 (gap) + 14 (lock) + 1 (gap) + 1 (status) + 1 (tip) = ~24
-    let content_height = 6 + 1 + lock_lines.len() as u16 + 2 + 1;
-    let top_pad = (area.height.saturating_sub(content_height)) / 2;
+    let content_h = k_banner_height + 1 + art_lines.len() + 2;
+    let top_pad   = height.saturating_sub(content_h) / 2;
 
-    let rows = Layout::vertical([
-        Constraint::Length(top_pad),
-        Constraint::Length(6),                     // Banner
-        Constraint::Length(1),                     // Gap
-        Constraint::Length(lock_lines.len() as u16), // Padlock Art
-        Constraint::Length(1),                     // Gap
-        Constraint::Length(1),                     // Status text
-        Constraint::Length(1),                     // Skip tip
-        Constraint::Min(0),
-    ])
-    .split(area);
+    let banner_left_pad = width.saturating_sub(k_banner_width) / 2;
+    let lock_left_pad   = width.saturating_sub(k_lock_body_width) / 2;
+    let status_off      = width.saturating_sub(status.len()) / 2;
 
-    // 1. Banner
-    let banner_lines: Vec<Line> = BANNER
-        .iter()
-        .map(|&line| Line::from(Span::styled(line, style)))
-        .collect();
-    frame.render_widget(
-        Paragraph::new(banner_lines).alignment(Alignment::Center),
-        rows[1],
-    );
+    let banner_pad = " ".repeat(banner_left_pad);
+    let lock_pad   = " ".repeat(lock_left_pad);
+    let status_pad = " ".repeat(status_off);
 
-    // 2. Padlock Art
-    let art_lines: Vec<Line> = lock_lines
-        .iter()
-        .map(|&line| Line::from(Span::styled(line, style)))
-        .collect();
-    frame.render_widget(
-        Paragraph::new(art_lines).alignment(Alignment::Center),
-        rows[3],
-    );
+    let mut lines: Vec<Line> = Vec::with_capacity(height);
 
-    // 3. Status Text
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(status_text, style),
-        ]))
-        .alignment(Alignment::Center),
-        rows[5],
-    );
+    for _ in 0..top_pad {
+        lines.push(Line::from(""));
+    }
 
-    // 4. Skip Tip
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("Press [Space / Enter] to skip", Style::default().fg(Color::DarkGray)),
-        ]))
-        .alignment(Alignment::Center),
-        rows[6],
-    );
+    for &b in BANNER.iter() {
+        lines.push(Line::from(Span::styled(format!("{}{}", banner_pad, b), style)));
+    }
+
+    lines.push(Line::from(""));
+
+    for &l in art_lines.iter() {
+        lines.push(Line::from(Span::styled(format!("{}{}", lock_pad, l), style)));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(format!("{}{}", status_pad, status), style)));
+
+    let p = Paragraph::new(lines);
+    frame.render_widget(p, area);
 }
