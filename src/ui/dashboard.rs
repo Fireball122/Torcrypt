@@ -8,7 +8,7 @@ use ratatui::{
     symbols,
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Gauge, Paragraph, Sparkline, Table, Row, Cell,
+        Block, BorderType, Borders, Gauge, Paragraph, Row, Sparkline, Table, Cell,
         Wrap,
     },
     Frame,
@@ -55,8 +55,27 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let pct   = app.progress_pct();
     let speed = app.speed_mbps;
+
+    let items_label = if app.items_total > 0 {
+        format!("{} / {} files", fmt_num(app.items_done), fmt_num(app.items_total))
+    } else {
+        "—".into()
+    };
+
+    let elapsed_label = if app.worker_state == WorkerState::Running || app.worker_state == WorkerState::Paused {
+        Line::from(vec![
+            Span::styled("  Elapsed / ETA : ", theme::style_subtext()),
+            Span::styled(fmt_duration(app.elapsed_secs), Style::default().fg(Color::White)),
+            Span::styled(" elapsed │ ETA ", theme::style_subtext()),
+            Span::styled(fmt_duration(app.eta_secs), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("  Elapsed / ETA : ", theme::style_subtext()),
+            Span::styled("—", theme::style_dim()),
+        ])
+    };
 
     let lines = vec![
         Line::from(vec![
@@ -71,35 +90,28 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         ]),
         Line::from(vec![
             Span::styled("  Items Done    : ", theme::style_subtext()),
-            Span::styled(
-                format!("{} / {} files", fmt_num(app.items_done), fmt_num(app.items_total)),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(items_label, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![
             Span::styled("  Throughput    : ", theme::style_subtext()),
             Span::styled(
                 format!("{:.1} MB/s", speed),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                if speed > 0.0 { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() },
             ),
         ]),
-        Line::from(vec![
-            Span::styled("  Elapsed / ETA : ", theme::style_subtext()),
-            Span::styled(fmt_duration(app.elapsed_secs), Style::default().fg(Color::White)),
-            Span::styled(" elapsed │ ETA ", theme::style_subtext()),
-            Span::styled(fmt_duration(app.eta_secs),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        ]),
+        elapsed_label,
         Line::from(vec![
             Span::styled("  Engine Status : ", theme::style_subtext()),
             Span::styled(
                 match app.worker_state {
+                    WorkerState::Idle      => "● STANDBY (Awaiting Job)",
                     WorkerState::Running   => "▶ RUNNING",
                     WorkerState::Paused    => "⏸ PAUSED",
                     WorkerState::Stopped   => "■ STOPPED",
                     WorkerState::Completed => "✔ COMPLETED",
                 },
                 theme::status_style(match app.worker_state {
+                    WorkerState::Idle      => "READY",
                     WorkerState::Running   => "ACTIVE",
                     WorkerState::Paused    => "PAUSED",
                     WorkerState::Stopped   => "FAIL",
@@ -113,7 +125,6 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         Paragraph::new(lines).wrap(Wrap { trim: false }),
         inner,
     );
-    let _ = pct; // used by gauge
 }
 
 fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
@@ -128,6 +139,12 @@ fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         .border_type(BorderType::Rounded)
         .border_style(theme::style_border());
 
+    let label_str = if app.items_total > 0 {
+        format!("{:.1}%  ─  {} / {} files", pct, fmt_num(app.items_done), fmt_num(app.items_total))
+    } else {
+        "0.0%  ─  STANDBY".into()
+    };
+
     let gauge = Gauge::default()
         .block(block)
         .gauge_style(
@@ -137,11 +154,7 @@ fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 .add_modifier(Modifier::BOLD),
         )
         .percent(pct as u16)
-        .label(format!("{:.1}%  ─  {} / {} files",
-            pct,
-            fmt_num(app.items_done),
-            fmt_num(app.items_total),
-        ));
+        .label(label_str);
 
     frame.render_widget(gauge, area);
 }
@@ -158,6 +171,12 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Magenta));
 
+    let label_str = if app.thread_active > 0 {
+        format!("{}/{} Cores Active  ({sat}% Saturation)", app.thread_active, app.thread_count)
+    } else {
+        format!("0/{} Cores Active (IDLE)", app.thread_count)
+    };
+
     let gauge = Gauge::default()
         .block(block)
         .gauge_style(
@@ -167,10 +186,7 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 .add_modifier(Modifier::BOLD),
         )
         .percent(sat as u16)
-        .label(format!(
-            "{}/{} Cores Active  ({sat}% Saturation)",
-            app.thread_active, app.thread_count
-        ));
+        .label(label_str);
 
     frame.render_widget(gauge, area);
 }
@@ -277,7 +293,7 @@ fn render_activity_stream(frame: &mut Frame, area: Rect, app: &AppState) {
         .rev()
         .collect();
 
-    let col_w = inner.width.saturating_sub(12) as usize; // after timestamp + level badge
+    let col_w = inner.width.saturating_sub(12) as usize;
 
     let rows: Vec<Row> = logs
         .iter()

@@ -74,7 +74,8 @@ pub fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
 
     // ── Right: Status + UTC Clock ─────────────────────────────────────────────
     let (status_icon, status_style) = match app.worker_state {
-        WorkerState::Running   => ("● READY",   theme::style_neon()),
+        WorkerState::Idle      => ("● STANDBY", theme::style_neon()),
+        WorkerState::Running   => ("● RUNNING", theme::style_neon()),
         WorkerState::Paused    => ("⏸ PAUSED",  theme::style_amber()),
         WorkerState::Stopped   => ("■ STOPPED", theme::style_red()),
         WorkerState::Completed => ("✔ DONE",    theme::style_neon()),

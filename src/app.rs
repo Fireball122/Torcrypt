@@ -38,6 +38,7 @@ impl Tab {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerState {
+    Idle,
     Running,
     Paused,
     Stopped,
@@ -157,16 +158,17 @@ impl Default for AppState {
             current_tab:      Tab::Dashboard,
             show_help:        false,
 
-            worker_state:     WorkerState::Running,
-            cipher_suite:     "AES-256-GCM".into(),
-            target_path:      "/var/vaults/secure_payload.enc".into(),
-            items_done:       14_892,
-            items_total:      25_000,
-            elapsed_secs:     142.0,
-            eta_secs:         96.0,
-            speed_mbps:       428.5,
+            // Clean IDLE / STANDBY startup state
+            worker_state:     WorkerState::Idle,
+            cipher_suite:     "—".into(),
+            target_path:      "No active target (Awaiting job)".into(),
+            items_done:       0,
+            items_total:      0,
+            elapsed_secs:     0.0,
+            eta_secs:         0.0,
+            speed_mbps:       0.0,
             thread_count:     12,
-            thread_active:    12,
+            thread_active:    0,
 
             throughput_history: VecDeque::with_capacity(60),
             log_ring:           VecDeque::with_capacity(200),
@@ -177,9 +179,9 @@ impl Default for AppState {
                     target:       "/var/vaults/secure_payload.enc".into(),
                     cipher:       "AES-256-GCM".into(),
                     kdf:          "Argon2id".into(),
-                    status:       "ACTIVE".into(),
+                    status:       "COMPLETED".into(),
                     created_at:   "2026-08-27 22:42".into(),
-                    keys_checked: 14_892,
+                    keys_checked: 25_000,
                     speed_mbps:   428.5,
                     memory_mb:    64,
                     threads:      12,
@@ -208,18 +210,6 @@ impl Default for AppState {
                     memory_mb:    48,
                     threads:      6,
                 },
-                Session {
-                    id:           "SES-9751".into(),
-                    target:       "/backup/archive_2024_q4.enc".into(),
-                    cipher:       "XChaCha20-Poly1305".into(),
-                    kdf:          "Argon2id".into(),
-                    status:       "FAILED".into(),
-                    created_at:   "2026-08-26 14:30".into(),
-                    keys_checked: 78_220,
-                    speed_mbps:   0.0,
-                    memory_mb:    32,
-                    threads:      4,
-                },
             ],
             sessions_selected: 0,
             search_mode:       false,
@@ -241,8 +231,8 @@ impl Default for AppState {
             sys_arch:      "x86_64".into(),
             sys_cpu:       "Intel Celeron J4105 @ 1.50GHz (4C/4T)".into(),
             sys_rustc:     "rustc 1.98.0 (88d9e12ae)".into(),
-            cpu_usage_pct: 46,
-            ram_used_gb:   19.8,
+            cpu_usage_pct: 12,
+            ram_used_gb:   4.2,
             ram_total_gb:  32.0,
             aes_ni:        true,
             avx2:          true,
@@ -252,28 +242,15 @@ impl Default for AppState {
             tick: 0,
         };
 
-        // Seed throughput history
-        let seed: &[u64] = &[
-            120, 180, 240, 310, 390, 420, 410, 435, 428, 440,
-            412, 395, 430, 428, 445, 450, 432, 428, 420, 428,
-            435, 440, 452, 460, 448, 438, 442, 450, 455, 462,
-            428, 430, 444, 451, 438, 462, 455, 428, 440, 435,
-            428, 430, 441, 452, 462, 455, 448, 438, 442, 450,
-            455, 462, 428, 430, 444, 451, 438, 462, 455, 428,
-        ];
-        for &v in seed {
-            state.throughput_history.push_back(v);
+        // Fill initial 60 throughput slots with 0 MB/s
+        for _ in 0..60 {
+            state.throughput_history.push_back(0);
         }
 
-        // Seed activity log
+        // Clean initial startup logs
         state.add_log(LogLevel::Info, "", "Hardware cryptographic acceleration active (AES-NI / AVX2)");
-        state.add_log(LogLevel::Lock, "/var/vaults/secure_payload.enc", "Opened cipher context │ Key: 256-bit │ IV: 96-bit GCM");
-        state.add_log(LogLevel::Info, "/chunks/part_004.bin", "Stream chunk verified authentic via HMAC-SHA512");
-        state.add_log(LogLevel::Warn, "", "Worker thread #3 throttling — Memory bandwidth saturated");
-        state.add_log(LogLevel::Info, "/chunks/part_012.bin", "Checkpoint committed to SQLite session database");
-        state.add_log(LogLevel::Lock, "", "12 Cores Active (88% saturation) │ AES-NI pipeline engaged");
-        state.add_log(LogLevel::Info, "/chunks/part_021.bin", "Ring buffer drain — swapped 47 pending telemetry events");
-        state.add_log(LogLevel::Warn, "/var/vaults/secure_payload.enc", "ETA updated — adjusted for memory pressure on core 7");
+        state.add_log(LogLevel::Info, "", "Torcrypt engine initialized — STANDBY mode");
+        state.add_log(LogLevel::Info, "", "Awaiting job dispatch or benchmark execution ([B] to benchmark)");
 
         state
     }
@@ -330,47 +307,42 @@ impl AppState {
             return;
         }
 
-        // 2. Main View Telemetry Updates
-        let jitter = (self.tick % 7) as f64 * 2.5 - 8.0;
-        self.speed_mbps = (428.5 + jitter).max(400.0);
+        // 2. Only advance worker stats if actively running a job
+        if self.worker_state == WorkerState::Running {
+            let jitter = (self.tick % 7) as f64 * 2.5 - 8.0;
+            self.speed_mbps = (428.5 + jitter).max(400.0);
 
-        // Advance progress slowly
-        if self.worker_state == WorkerState::Running && self.items_done < self.items_total {
-            self.items_done = (self.items_done + 3).min(self.items_total);
+            if self.items_done < self.items_total {
+                self.items_done = (self.items_done + 3).min(self.items_total);
+            }
+
+            if self.tick % 2 == 0 {
+                let mb = (420 + (self.tick % 9 * 5)) as u64;
+                self.push_throughput(mb);
+            }
+
+            if self.tick % 15 == 0 {
+                self.add_log(LogLevel::Info, "/chunks/part_031.bin", "Block stream verified authentic");
+            }
+        } else {
+            // In Idle / Paused / Stopped state, throughput is 0
+            if self.tick % 2 == 0 {
+                self.push_throughput(0);
+            }
         }
 
-        // Push simulated throughput sample every 2 ticks
-        if self.tick % 2 == 0 {
-            let mb = (420 + (self.tick % 9 * 5)) as u64;
-            self.push_throughput(mb);
-        }
-
-        // Rotate a new log every 15 ticks
-        if self.tick % 15 == 0 {
-            let msgs = [
-                (LogLevel::Info, "/chunks/part_031.bin", "Block hash verified — SHA-512 digest OK"),
-                (LogLevel::Lock, "/var/vaults/secure_payload.enc", "AES-GCM authentication tag validated"),
-                (LogLevel::Info, "", "Thread pool heartbeat — all 12 workers responding"),
-                (LogLevel::Warn, "", "Prefetch buffer 78% full — increasing drain cadence"),
-                (LogLevel::Info, "/chunks/part_042.bin", "Ring buffer swap completed — 0 dropped events"),
-            ];
-            let i = ((self.tick / 15) % msgs.len() as u64) as usize;
-            let (lvl, path, msg) = msgs[i].clone();
-            self.add_log(lvl, path, msg);
-        }
-
-        // Advance benchmark progress
+        // 3. Advance benchmark progress if benchmark is executing
         if self.bench_running && self.bench_progress < 100 {
             self.bench_progress = (self.bench_progress + 2).min(100);
             if self.bench_progress == 100 {
                 self.bench_running = false;
+                self.add_log(LogLevel::Lock, "", "Multi-threaded benchmark suite run completed.");
             }
         }
     }
 
     pub fn on_key_char(&mut self, c: char) {
         if self.in_splash {
-            // Any key skips the splash animation into main view
             self.in_splash = false;
             return;
         }
@@ -391,17 +363,28 @@ impl AppState {
             '?' => self.show_help = !self.show_help,
             'q' | 'Q' => {} // handled in main
             ' ' => {
-                self.worker_state = if self.worker_state == WorkerState::Running {
-                    WorkerState::Paused
-                } else {
-                    WorkerState::Running
-                };
+                // Toggle between Paused and Running if a job exists
+                if self.worker_state == WorkerState::Running {
+                    self.worker_state = WorkerState::Paused;
+                    self.add_log(LogLevel::Warn, "", "Worker pipeline PAUSED by user");
+                } else if self.worker_state == WorkerState::Paused {
+                    self.worker_state = WorkerState::Running;
+                    self.add_log(LogLevel::Info, "", "Worker pipeline RESUMED");
+                }
             }
-            'c' | 'C' => { self.worker_state = WorkerState::Stopped; }
+            'c' | 'C' => {
+                if self.worker_state == WorkerState::Running || self.worker_state == WorkerState::Paused {
+                    self.worker_state = WorkerState::Stopped;
+                    self.speed_mbps   = 0.0;
+                    self.thread_active = 0;
+                    self.add_log(LogLevel::Err, "", "Active session cancelled by user");
+                }
+            }
             'b' | 'B' => {
-                if self.current_tab == Tab::Benchmark && !self.bench_running {
+                if !self.bench_running {
                     self.bench_running  = true;
                     self.bench_progress = 0;
+                    self.add_log(LogLevel::Info, "", "Executing multi-core throughput benchmark suite...");
                 }
             }
             '/' => {
