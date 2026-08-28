@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use app::{AppState, Tab};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -46,7 +46,12 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
         if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) => {
-                    // Escape sequences first
+                    // 1. MUST ignore Release and Repeat events on Windows (prevents initial launch keystroke release from canceling splash)
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    // 2. Escape / Interrupt sequences
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
                         match key.code {
                             KeyCode::Char('c') => return Ok(()),
@@ -54,16 +59,21 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                         }
                     }
 
-                    // 1. If in splash animation, any key dismisses splash
+                    // 3. If in splash animation, only intentional skip keys dismiss after a 250ms startup grace period
                     if app.in_splash {
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(()),
-                            _ => { app.in_splash = false; }
+                            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
+                                if app.splash_start_time.elapsed().as_millis() > 250 {
+                                    app.in_splash = false;
+                                }
+                            }
+                            _ => {}
                         }
                         continue;
                     }
 
-                    // 2. Main keyboard handling
+                    // 4. Main keyboard handling
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Char('Q')
                             if !app.search_mode && !app.show_help =>

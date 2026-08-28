@@ -147,6 +147,7 @@ pub struct AppState {
     pub in_splash:          bool,
     pub splash_frame:       usize,
     pub splash_last_tick:   Instant,
+    pub splash_start_time:  Instant,
 
     // Routing
     pub current_tab:        Tab,
@@ -208,13 +209,15 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         let initial_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/home/ultaria"));
+        let now = Instant::now();
 
         let mut state = Self {
             in_splash:          true,
             splash_frame:       0,
-            splash_last_tick:   Instant::now(),
+            splash_last_tick:   now,
+            splash_start_time:  now,
 
-            current_tab:        Tab::Analyze, // Tab 1 by default
+            current_tab:        Tab::Analyze,
             show_help:          false,
 
             current_dir:        initial_dir,
@@ -562,11 +565,6 @@ impl AppState {
     }
 
     pub fn on_key_char(&mut self, c: char) {
-        if self.in_splash {
-            self.in_splash = false;
-            return;
-        }
-
         if self.search_mode {
             match c {
                 '\x08' | '\x7f' => { self.search_query.pop(); }
