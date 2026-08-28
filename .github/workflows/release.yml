@@ -14,29 +14,34 @@ jobs:
     name: Build - ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          # Linux x86_64 Static (Zero Glibc Dependency — Works on ANY Linux distro)
+          # Linux x86_64 Static (Zero Glibc Dependency — 100% Portable)
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             asset_name: torcrypt-linux-x86_64
             bin_source: target/x86_64-unknown-linux-musl/release/torcrypt-tui
-          # Linux aarch64 Static
-          - target: aarch64-unknown-linux-musl
+
+          # Linux x86_64 Glibc Fallback
+          - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            asset_name: torcrypt-linux-aarch64
-            bin_source: target/aarch64-unknown-linux-musl/release/torcrypt-tui
-          # macOS x86_64
+            asset_name: torcrypt-linux-x86_64-gnu
+            bin_source: target/x86_64-unknown-linux-gnu/release/torcrypt-tui
+
+          # macOS Intel (x86_64)
           - target: x86_64-apple-darwin
             os: macos-latest
             asset_name: torcrypt-macos-x86_64
             bin_source: target/x86_64-apple-darwin/release/torcrypt-tui
+
           # macOS Apple Silicon (M1/M2/M3)
           - target: aarch64-apple-darwin
             os: macos-latest
             asset_name: torcrypt-macos-aarch64
             bin_source: target/aarch64-apple-darwin/release/torcrypt-tui
-          # Windows x86_64
+
+          # Windows x86_64 (MSVC Native)
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             asset_name: torcrypt-windows-x86_64.exe
@@ -47,15 +52,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Musl Tools (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-
-      - name: Install aarch64 cross tools (if ARM Linux)
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -71,7 +70,8 @@ jobs:
 
       - name: Stage Release Artifact (Windows)
         if: runner.os == 'Windows'
-        run: copy ${{ matrix.bin_source }} ${{ matrix.asset_name }}
+        shell: pwsh
+        run: Copy-Item "${{ matrix.bin_source }}" -Destination "${{ matrix.asset_name }}" -Force
 
       - name: Publish Artifact to GitHub Release
         uses: softprops/action-gh-release@v2
