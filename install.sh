@@ -3,10 +3,10 @@ set -e
 
 # ==============================================================================
 #  TORCRYPT — One-Liner Universal Installer
-#  Repository: https://github.com/Fireball122/torcrypt
+#  Repository: https://github.com/Fireball122/Torcrypt
 # ==============================================================================
 
-REPO="Fireball122/torcrypt"
+REPO="Fireball122/Torcrypt"
 BIN_NAME="torcrypt-tui"
 ALIAS_NAME="torcrypt"
 SHORT_ALIAS="dt"
@@ -61,13 +61,18 @@ if curl -fsSL --connect-timeout 10 "${DOWNLOAD_URL}" -o "${TARGET_PATH}" 2>/dev/
     chmod +x "${TARGET_PATH}"
     echo -e "${GREEN}[✔] Downloaded pre-compiled binary successfully.${RESET}"
 else
-    echo -e "${YELLOW}[!] Pre-compiled binary not found on release tag. Falling back to Cargo build...${RESET}"
-    if command -v cargo >/dev/null 2>&1; then
-        echo -e "${CYAN}[*] Compiling latest release with Cargo...${RESET}"
+    echo -e "${YELLOW}[!] Pre-compiled binary not yet found on latest release. Falling back to Cargo build...${RESET}"
+    
+    # Source cargo env if available
+    [ -f "${HOME}/.cargo/env" ] && source "${HOME}/.cargo/env"
+
+    if command -v cargo >/dev/null 2>&1 || [ -x "${HOME}/.cargo/bin/cargo" ]; then
+        CARGO_BIN="$(command -v cargo || echo "${HOME}/.cargo/bin/cargo")"
+        echo -e "${CYAN}[*] Compiling latest release with Cargo (${CARGO_BIN})...${RESET}"
         TEMP_DIR="$(mktemp -d)"
         git clone --depth 1 "https://github.com/${REPO}.git" "${TEMP_DIR}/torcrypt"
         cd "${TEMP_DIR}/torcrypt"
-        cargo build --release
+        "${CARGO_BIN}" build --release
         install -m755 "target/release/${BIN_NAME}" "${TARGET_PATH}"
         rm -rf "${TEMP_DIR}"
         echo -e "${GREEN}[✔] Compiled and installed via Cargo.${RESET}"
