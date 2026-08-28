@@ -91,11 +91,8 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                         KeyCode::Backspace if app.search_mode => {
                             app.search_query.pop();
                         }
-                        KeyCode::Backspace if app.current_tab == Tab::Analyze => {
-                            if let Some(parent) = app.current_dir.parent().map(|p| p.to_path_buf()) {
-                                app.current_dir = parent;
-                                app.refresh_directory();
-                            }
+                        KeyCode::Backspace | KeyCode::Left if app.current_tab == Tab::Analyze => {
+                            app.navigate_up_directory();
                         }
                         KeyCode::Tab if app.current_tab == Tab::Analyze => {
                             app.attack_selected = (app.attack_selected + 1) % 3;

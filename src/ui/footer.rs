@@ -35,14 +35,14 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
             spans.push(label("Navigate"));
             spans.push(key("Enter"));
             spans.push(label("Open"));
+            spans.push(key("← / Bksp"));
+            spans.push(label("Back"));
             spans.push(key("Tab"));
             spans.push(label("Strategy"));
             if app.analysis.ready_to_crack {
                 spans.push(key("A / Space"));
                 spans.push(label("Launch Recovery"));
             }
-            spans.push(key("H"));
-            spans.push(label("Parent Dir"));
         }
         Tab::Dashboard => {
             let pause_label: &'static str = if app.worker_state == WorkerState::Paused {

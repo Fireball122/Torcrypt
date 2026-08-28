@@ -32,12 +32,13 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
     ])
     .split(area);
 
-    // 1. Current Path Banner
+    // 1. Current Path Banner with Back hint
     let cur_path_str = app.current_dir.to_string_lossy();
     let path_block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
-            Span::styled("CURRENT DIRECTORY", theme::style_title()),
+            Span::styled("EXPLORER", theme::style_title()),
+            Span::styled("  [← / Bksp: Back] ", theme::style_dim()),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -78,7 +79,9 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
             let is_sel = i == sel;
             let prefix = if is_sel { "▶ " } else { "  " };
 
-            let type_style = if entry.is_dir {
+            let type_style = if entry.is_parent {
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            } else if entry.is_dir {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else if entry.is_encrypted {
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
@@ -88,6 +91,8 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
 
             let name_style = if is_sel {
                 Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            } else if entry.is_parent {
+                Style::default().fg(Color::Green)
             } else if entry.is_dir {
                 Style::default().fg(Color::Cyan)
             } else if entry.is_encrypted {
@@ -159,7 +164,7 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
     let a = &app.analysis;
 
     let (lock_badge, lock_style) = if a.is_encrypted {
-        ("🔒 LOCKED CONTAINER DETECTED", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        ("🔒 LOCKED CONTAINER / CAPTURE", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
     } else if a.mime_type.contains("Directory") {
         ("📁 DIRECTORY / FOLDER", Style::default().fg(Color::Cyan))
     } else {
@@ -207,7 +212,6 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), content_layout[0]);
 
-    // Entropy gauge bar
     let entropy_gauge = Gauge::default()
         .gauge_style(
             Style::default()
@@ -242,20 +246,22 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         let p = Paragraph::new(vec![
             Line::from(vec![Span::raw("")]),
             Line::from(vec![
-                Span::styled("  ◈ Instructions:", theme::style_subtext()),
+                Span::styled("  ◈ Navigation & Instructions:", theme::style_subtext()),
             ]),
             Line::from(vec![
                 Span::styled("    • Navigate with ", theme::style_subtext()),
                 Span::styled("[J / K] or [↑ / ↓]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                Span::styled(" to browse files in the explorer.", theme::style_subtext()),
+                Span::styled(" to browse items in explorer.", theme::style_subtext()),
             ]),
             Line::from(vec![
                 Span::styled("    • Press ", theme::style_subtext()),
                 Span::styled("[Enter]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                Span::styled(" on a directory or parent [..] to open it.", theme::style_subtext()),
+                Span::styled(" on a directory or ", theme::style_subtext()),
+                Span::styled("[← / Backspace / H]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(" to go back.", theme::style_subtext()),
             ]),
             Line::from(vec![
-                Span::styled("    • Select an encrypted archive (ZIP, PDF, RAR, AES vault) to analyze.", theme::style_subtext()),
+                Span::styled("    • Select an encrypted file (ZIP, PCAP, PDF, RAR, AES vault) to analyze.", theme::style_subtext()),
             ]),
         ]);
         frame.render_widget(p, inner);
@@ -301,7 +307,6 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
 
     frame.render_widget(Paragraph::new(strat_lines).wrap(Wrap { trim: false }), sub_sections[0]);
 
-    // Launch Button Pill
     let launch_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)

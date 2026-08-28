@@ -76,6 +76,7 @@ pub struct FileEntry {
     pub path:         PathBuf,
     pub name:         String,
     pub is_dir:       bool,
+    pub is_parent:    bool,
     pub size_bytes:   u64,
     pub is_encrypted: bool,
     pub badge:        String,
@@ -302,7 +303,7 @@ impl Default for AppState {
         // Clean initial startup logs
         state.add_log(LogLevel::Info, "", "Hardware cryptographic acceleration active (AES-NI / AVX2)");
         state.add_log(LogLevel::Info, "", "Torcrypt engine initialized — STANDBY mode");
-        state.add_log(LogLevel::Info, "", "Smart container analyzer active — browse and select target in Tab 1");
+        state.add_log(LogLevel::Info, "", "PCAP / WPA2-PSK & Container analyzer active — select target in Tab 1");
 
         // Load initial directory listing
         state.refresh_directory();
@@ -314,18 +315,26 @@ impl Default for AppState {
 impl AppState {
     // ── Directory Refresh & Navigation ───────────────────────────────────────
 
+    pub fn navigate_up_directory(&mut self) {
+        if let Some(parent) = self.current_dir.parent().map(|p| p.to_path_buf()) {
+            self.current_dir = parent;
+            self.refresh_directory();
+        }
+    }
+
     pub fn refresh_directory(&mut self) {
         let mut entries: Vec<FileEntry> = Vec::new();
 
-        // 1. Add parent directory entry if not at filesystem root
+        // 1. Add explicit parent directory entry if not at filesystem root
         if self.current_dir.parent().is_some() {
             entries.push(FileEntry {
                 path:         self.current_dir.parent().unwrap().to_path_buf(),
-                name:         ".. (Parent Directory)".into(),
+                name:         ".. (Parent Directory ↩)".into(),
                 is_dir:       true,
+                is_parent:    true,
                 size_bytes:   0,
                 is_encrypted: false,
-                badge:        "📁 [DIR]".into(),
+                badge:        "↩ [BACK]".into(),
             });
         }
 
@@ -348,6 +357,7 @@ impl AppState {
                             path,
                             name,
                             is_dir:       true,
+                            is_parent:    false,
                             size_bytes:   0,
                             is_encrypted: false,
                             badge:        "📁 [DIR]".into(),
@@ -359,6 +369,7 @@ impl AppState {
                             path,
                             name,
                             is_dir:       false,
+                            is_parent:    false,
                             size_bytes:   size,
                             is_encrypted: is_enc,
                             badge,
@@ -391,6 +402,22 @@ impl AppState {
         }
 
         let entry = &self.dir_entries[self.file_selected_idx];
+        if entry.is_parent {
+            self.analysis = FileAnalysis {
+                file_path:          entry.path.to_string_lossy().to_string(),
+                file_size:          0,
+                mime_type:          "Parent Directory Navigation".into(),
+                is_encrypted:       false,
+                lock_type:          "Directory Level Up".into(),
+                entropy:            0.0,
+                magic_header:       "N/A".into(),
+                recommended_attack: "Press [Enter] or [← / Backspace] to go back".into(),
+                ready_to_crack:     false,
+                attack_profile_idx: 0,
+            };
+            return;
+        }
+
         if entry.is_dir {
             self.analysis = FileAnalysis {
                 file_path:          entry.path.to_string_lossy().to_string(),
@@ -440,7 +467,7 @@ impl AppState {
         self.add_log(
             LogLevel::Lock,
             &path_clone,
-            &format!("Opened target container: {} │ Strategy: {}", cipher_clone, attack_name),
+            &format!("Opened target: {} │ Strategy: {}", cipher_clone, attack_name),
         );
         self.add_log(LogLevel::Info, "", "Dispatched task to 12 CPU worker threads (AVX2 SIMD)");
 
@@ -563,15 +590,10 @@ impl AppState {
                 self.launch_attack_from_analysis();
             }
             '\t' if self.current_tab == Tab::Analyze => {
-                // Cycle attack strategy
                 self.attack_selected = (self.attack_selected + 1) % 3;
             }
-            'h' | 'H' if self.current_tab == Tab::Analyze => {
-                // Go to parent directory
-                if let Some(parent) = self.current_dir.parent().map(|p| p.to_path_buf()) {
-                    self.current_dir = parent;
-                    self.refresh_directory();
-                }
+            'h' | 'H' | 'b' | 'B' if self.current_tab == Tab::Analyze => {
+                self.navigate_up_directory();
             }
 
             ' ' => {
@@ -659,6 +681,10 @@ fn detect_file_badge(path: &Path, name: &str) -> (String, bool) {
     let lower = name.to_lowercase();
     if lower.ends_with(".zip") {
         ("🔒 [ZIP]".into(), true)
+    } else if lower.ends_with(".pcap") || lower.ends_with(".pcapng") || lower.ends_with(".cap") {
+        ("📡 [WPA]".into(), true)
+    } else if lower.ends_with(".hccapx") || lower.ends_with(".22000") {
+        ("📶 [WPA]".into(), true)
     } else if lower.ends_with(".pdf") {
         ("📄 [PDF]".into(), true)
     } else if lower.ends_with(".rar") {
@@ -714,10 +740,34 @@ fn analyze_file_magic(path: &Path, size_bytes: u64) -> FileAnalysis {
 
     let entropy = calculate_shannon_entropy(slice);
     let hex_header = slice.iter().take(8).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-
     let filename = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
 
-    // 1. ZIP Inspection (PK\x03\x04)
+    // 1. PCAP / PCAPNG Network Captures (0xD4C3B2A1 / 0xA1B2C3D4 / 0x0A0D0D0A)
+    let is_pcap_le = slice.starts_with(&[0xD4, 0xC3, 0xB2, 0xA1]);
+    let is_pcap_be = slice.starts_with(&[0xA1, 0xB2, 0xC3, 0xD4]);
+    let is_pcap_ns = slice.starts_with(&[0x4D, 0x3C, 0xB2, 0xA1]);
+    let is_pcapng  = slice.starts_with(&[0x0A, 0x0D, 0x0D, 0x0A]);
+    let is_hccapx  = slice.starts_with(b"HCPX") || filename.ends_with(".hccapx") || filename.ends_with(".22000");
+
+    if is_pcap_le || is_pcap_be || is_pcap_ns || is_pcapng || is_hccapx || filename.ends_with(".pcap") || filename.ends_with(".cap") {
+        let has_eapol = slice.windows(2).any(|w| w == [0x88, 0x8E]) || filename.contains("wpa") || filename.contains("handshake");
+        let mime = if is_pcapng { "application/x-pcapng (Wireshark Capture)" } else if is_hccapx { "application/x-hashcat-22000" } else { "application/vnd.tcpdump.pcap" };
+
+        return FileAnalysis {
+            file_path: path.to_string_lossy().to_string(),
+            file_size: size_bytes,
+            mime_type: mime.into(),
+            is_encrypted: true,
+            lock_type: "WPA2/WPA3-PSK (PBKDF2-SHA1, 4096 iter, 32-byte PMK)".into(),
+            entropy,
+            magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else if is_hccapx { "HCPX (Hashcat Format)".into() } else { format!("D4 C3 B2 A1 ({})", hex_header) },
+            recommended_attack: "Dictionary + GPU Rules (WPA 4-Way Handshake / PMKID)".into(),
+            ready_to_crack: true,
+            attack_profile_idx: 0,
+        };
+    }
+
+    // 2. ZIP Inspection (PK\x03\x04)
     if slice.len() >= 8 && slice.starts_with(b"PK\x03\x04") {
         let flags = u16::from_le_bytes([slice[6], slice[7]]);
         let is_encrypted = (flags & 0x0001) != 0;
@@ -751,7 +801,7 @@ fn analyze_file_magic(path: &Path, size_bytes: u64) -> FileAnalysis {
         };
     }
 
-    // 2. PDF Document (%PDF-)
+    // 3. PDF Document (%PDF-)
     if slice.starts_with(b"%PDF-") {
         let is_encrypted = slice.windows(8).any(|w| w == b"/Encrypt") || filename.ends_with(".pdf");
         return FileAnalysis {
@@ -772,7 +822,7 @@ fn analyze_file_magic(path: &Path, size_bytes: u64) -> FileAnalysis {
         };
     }
 
-    // 3. RAR Archive (Rar!\x1A\x07)
+    // 4. RAR Archive (Rar!\x1A\x07)
     if slice.starts_with(b"Rar!\x1A\x07") {
         let is_rar5 = slice.len() >= 8 && slice[6] == 0x01 && slice[7] == 0x00;
         let lock_type = if is_rar5 { "RAR5 Archive Encrypted ($rar5$ PBKDF2-SHA256)" } else { "RAR4 Archive Encrypted ($rar3$ AES-128)" };
@@ -790,7 +840,7 @@ fn analyze_file_magic(path: &Path, size_bytes: u64) -> FileAnalysis {
         };
     }
 
-    // 4. Raw AES / High-Entropy Encrypted Binary
+    // 5. Raw AES / High-Entropy Encrypted Binary
     if entropy > 7.80 || filename.ends_with(".enc") || filename.ends_with(".aes") || filename.ends_with(".vault") {
         return FileAnalysis {
             file_path: path.to_string_lossy().to_string(),
@@ -806,7 +856,7 @@ fn analyze_file_magic(path: &Path, size_bytes: u64) -> FileAnalysis {
         };
     }
 
-    // 5. Default Plaintext / Hash File
+    // 6. Default Plaintext / Hash File
     let is_txt = filename.ends_with(".txt") || filename.ends_with(".hash");
     FileAnalysis {
         file_path: path.to_string_lossy().to_string(),
