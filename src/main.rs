@@ -23,6 +23,11 @@ fn main() -> io::Result<()> {
     let mut term = Terminal::new(backend)?;
     term.hide_cursor()?;
 
+    // Drain any residual startup keystrokes (e.g. Enter pressed in PowerShell/cmd)
+    while event::poll(Duration::from_millis(50))? {
+        let _ = event::read()?;
+    }
+
     let result = run(&mut term);
 
     // ── Teardown terminal ─────────────────────────────────────────────────────
@@ -46,25 +51,23 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
         if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) => {
-                    // 1. MUST ignore Release and Repeat events on Windows (prevents initial launch keystroke release from canceling splash)
+                    // Ignore KeyRelease and KeyRepeat events on Windows
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
 
-                    // 2. Escape / Interrupt sequences
-                    if key.modifiers.contains(KeyModifiers::CONTROL) {
-                        match key.code {
-                            KeyCode::Char('c') => return Ok(()),
-                            _ => {}
-                        }
+                    // Ctrl+C always exits immediately
+                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                        return Ok(());
                     }
 
-                    // 3. If in splash animation, only intentional skip keys dismiss after a 250ms startup grace period
+                    // If currently displaying startup animation:
                     if app.in_splash {
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(()),
-                            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Esc => {
-                                if app.splash_start_time.elapsed().as_millis() > 250 {
+                            // Require at least 1.0s elapsed before allowing Space/Enter/Esc to skip
+                            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
+                                if app.splash_start_time.elapsed().as_millis() >= 1000 {
                                     app.in_splash = false;
                                 }
                             }
@@ -73,7 +76,7 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                         continue;
                     }
 
-                    // 4. Main keyboard handling
+                    // Main view keyboard handling
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Char('Q')
                             if !app.search_mode && !app.show_help =>
@@ -137,12 +140,12 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                         _ => {}
                     }
                 }
-                Event::Resize(_, _) => { /* ratatui handles reflow automatically */ }
+                Event::Resize(_, _) => { /* ratatui automatically reflows layout */ }
                 _ => {}
             }
         }
 
-        // ── Tick at 30 FPS ────────────────────────────────────────────────────
+        // ── Advance clock tick at 30 FPS ──────────────────────────────────────
         if last_tick.elapsed() >= tick_rate {
             app.on_tick();
             last_tick = Instant::now();

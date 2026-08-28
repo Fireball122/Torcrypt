@@ -31,7 +31,6 @@ static FRAMES: [&str; 13] = [
     "               .------.\n              / .----. \\\n             / /      \\ \\\n             | |      | |\n             | |      | |\n             | |      | |\n             | |      |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
     "                .------.\n               / .----. \\\n              / /      \\ \\\n              | |      | |\n              | |      | |\n              | |      | |\n              | |      |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
     "                .--------.\n               / .------. \\\n              / /        \\ \\\n              | |        | |\n              | |        | |\n              | |        | |\n              | |        |_|\n  ____________| |_\n.' ( )        |_| '.\n'._____ ____ _____.'\n|     .'____'.     |\n'.__.'.'    '.'.__.'\n'.__  |      |  __.'\n|   '.'.____.'.'   |\n'.____'.____.'____.'\n'.________________.'",
-
 ];
 
 pub fn render_splash(frame: &mut Frame, area: Rect, app: &AppState) {
@@ -67,7 +66,7 @@ pub fn render_splash(frame: &mut Frame, area: Rect, app: &AppState) {
     let k_banner_height = 6usize;
     let k_lock_body_width = 20usize;
 
-    let content_h = k_banner_height + 1 + art_lines.len() + 2;
+    let content_h = k_banner_height + 1 + art_lines.len() + 1;
     let top_pad   = height.saturating_sub(content_h) / 2;
 
     let banner_left_pad = width.saturating_sub(k_banner_width) / 2;
