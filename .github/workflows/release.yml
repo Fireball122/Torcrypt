@@ -16,16 +16,16 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux x86_64
-          - target: x86_64-unknown-linux-gnu
+          # Linux x86_64 Static (Zero Glibc Dependency — Works on ANY Linux distro)
+          - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             asset_name: torcrypt-linux-x86_64
-            bin_source: target/x86_64-unknown-linux-gnu/release/torcrypt-tui
-          # Linux aarch64
-          - target: aarch64-unknown-linux-gnu
+            bin_source: target/x86_64-unknown-linux-musl/release/torcrypt-tui
+          # Linux aarch64 Static
+          - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             asset_name: torcrypt-linux-aarch64
-            bin_source: target/aarch64-unknown-linux-gnu/release/torcrypt-tui
+            bin_source: target/aarch64-unknown-linux-musl/release/torcrypt-tui
           # macOS x86_64
           - target: x86_64-apple-darwin
             os: macos-latest
@@ -46,15 +46,21 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Install Musl Tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install aarch64 cross tools (if ARM Linux)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Install aarch64 cross-compilation tools (if Linux ARM)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Compile Release Binary
         run: cargo build --release --target ${{ matrix.target }}
