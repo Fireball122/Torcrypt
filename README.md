@@ -1,16 +1,20 @@
 # 🔐 TORCRYPT
 
 > **High-Performance Cryptographic Analysis & Decryption TUI**  
-> Built in Rust with **Ratatui** and **Crossterm**. Features a Cyberpunk dark-mode terminal UI, zero dead space, 30 FPS non-blocking event loops, and container header inspection.
+> Built in Rust with **Ratatui** and **Crossterm**. Features a Cyberpunk dark-mode terminal UI, zero dead space, 30 FPS non-blocking event loops, and container header inspection. Native cross-platform support for **Linux**, **macOS**, and **Windows**.
 
 ---
 
 ## ⚡ One-Liner Quick Install
 
-Install the latest release with one command:
-
+### 🐧 Linux & 🍎 macOS (Bash / Zsh)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Fireball122/torcrypt/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Fireball122/Torcrypt/main/install.sh | bash
+```
+
+### 🪟 Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/Fireball122/Torcrypt/main/install.ps1 | iex
 ```
 
 Once installed, launch the application using:
@@ -75,8 +79,8 @@ dt
 ## 🛠️ Building from Source
 
 ```bash
-git clone https://github.com/Fireball122/torcrypt.git
-cd torcrypt
+git clone https://github.com/Fireball122/Torcrypt.git
+cd Torcrypt
 cargo build --release
 
 # Run

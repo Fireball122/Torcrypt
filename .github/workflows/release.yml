@@ -16,18 +16,31 @@ jobs:
     strategy:
       matrix:
         include:
+          # Linux x86_64
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             asset_name: torcrypt-linux-x86_64
+            bin_source: target/x86_64-unknown-linux-gnu/release/torcrypt-tui
+          # Linux aarch64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             asset_name: torcrypt-linux-aarch64
+            bin_source: target/aarch64-unknown-linux-gnu/release/torcrypt-tui
+          # macOS x86_64
           - target: x86_64-apple-darwin
             os: macos-latest
             asset_name: torcrypt-macos-x86_64
+            bin_source: target/x86_64-apple-darwin/release/torcrypt-tui
+          # macOS Apple Silicon (M1/M2/M3)
           - target: aarch64-apple-darwin
             os: macos-latest
             asset_name: torcrypt-macos-aarch64
+            bin_source: target/aarch64-apple-darwin/release/torcrypt-tui
+          # Windows x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            asset_name: torcrypt-windows-x86_64.exe
+            bin_source: target/x86_64-pc-windows-msvc/release/torcrypt-tui.exe
 
     steps:
       - name: Checkout Code
@@ -46,8 +59,13 @@ jobs:
       - name: Compile Release Binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Stage Release Artifact
-        run: cp target/${{ matrix.target }}/release/torcrypt-tui ${{ matrix.asset_name }}
+      - name: Stage Release Artifact (POSIX)
+        if: runner.os != 'Windows'
+        run: cp ${{ matrix.bin_source }} ${{ matrix.asset_name }}
+
+      - name: Stage Release Artifact (Windows)
+        if: runner.os == 'Windows'
+        run: copy ${{ matrix.bin_source }} ${{ matrix.asset_name }}
 
       - name: Publish Artifact to GitHub Release
         uses: softprops/action-gh-release@v2
