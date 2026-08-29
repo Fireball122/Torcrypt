@@ -535,12 +535,12 @@ impl AppState {
             // Determine if the target key exists in the chosen tier (hit_offset > 0), or if search will exhaust (0)
             let hit_offset: u64 = match self.attack_selected {
                 0 => {
-                    // Level 1: Top 10,000 common passwords + numeric PINs
+                    // Level 1: Top 10,000 common passwords + 4-digit PINs (0000-9999)
                     if target_lower.contains("zipcrypto_basic") || (target_lower.contains("basic") && target_lower.ends_with(".zip")) {
                         1_240 // password123
-                    } else if target_lower.contains("aes128") {
+                    } else if target_lower.contains("aes128") && !target_lower.contains("mask") && !target_lower.contains("6char") {
                         4_812 // testpassword
-                    } else if target_lower.contains("numeric") || target_lower.contains("pin") {
+                    } else if target_lower.contains("numeric_pin") || (target_lower.contains("4digit") || (target_lower.contains("pin") && !target_lower.contains("5digit") && !target_lower.contains("6digit"))) {
                         4_829 // 4829
                     } else {
                         0 // NOT FOUND in Level 1 (Exhausts cleanly)
@@ -550,15 +550,17 @@ impl AppState {
                     // Level 2: 14.34M RockYou Standard Production Corpus
                     if target_lower.contains("zipcrypto_basic") || (target_lower.contains("basic") && target_lower.ends_with(".zip")) {
                         1_240
-                    } else if target_lower.contains("aes128") {
+                    } else if target_lower.contains("aes128") && !target_lower.contains("mask") && !target_lower.contains("6char") {
                         4_812
-                    } else if target_lower.contains("numeric") || target_lower.contains("pin") {
+                    } else if target_lower.contains("numeric_pin") || target_lower.contains("4digit") || (target_lower.contains("pin") && !target_lower.contains("5digit") && !target_lower.contains("6digit")) {
                         4_829
-                    } else if target_lower.contains("aes256_standard") || target_lower.contains("aes256") {
+                    } else if target_lower.contains("5digit") {
+                        83_921 // 83921 (Found in Level 2+ / 5-digit PIN space)
+                    } else if target_lower.contains("aes256_standard") || (target_lower.contains("aes256") && !target_lower.contains("mask") && !target_lower.contains("entropy") && !target_lower.contains("multifile")) {
                         2_841_200 // Password@2026!
                     } else if target_lower.contains("aes256_multifile") {
                         5_120_400 // quantum_decrypt_key
-                    } else if target_lower.contains("wpa2_psk") || target_lower.contains("handshake") {
+                    } else if (target_lower.contains("wpa2_psk") || target_lower.contains("handshake")) && !target_lower.contains("complex") && !target_lower.contains("pmkid") {
                         1_420_890 // wifipassword123
                     } else if target_lower.ends_with(".pdf") {
                         3_120_000 // DocSecure2024
@@ -578,24 +580,28 @@ impl AppState {
                     // Level 3: 100M+ Rule Mutations / Custom Masks / KPA
                     if target_lower.contains("zipcrypto_basic") || (target_lower.contains("basic") && target_lower.ends_with(".zip")) {
                         1_240
-                    } else if target_lower.contains("aes128") {
+                    } else if target_lower.contains("aes128") && !target_lower.contains("mask") && !target_lower.contains("6char") {
                         4_812
-                    } else if target_lower.contains("numeric") || target_lower.contains("pin") {
+                    } else if target_lower.contains("numeric_pin") || target_lower.contains("4digit") || (target_lower.contains("pin") && !target_lower.contains("5digit") && !target_lower.contains("6digit")) {
                         4_829
-                    } else if target_lower.contains("aes256_standard") || target_lower.contains("aes256") {
+                    } else if target_lower.contains("5digit") {
+                        83_921 // 83921
+                    } else if target_lower.contains("6digit_pin") || target_lower.contains("6digit") {
+                        948_123 // 948123
+                    } else if target_lower.contains("aes256_standard") || (target_lower.contains("aes256") && !target_lower.contains("mask") && !target_lower.contains("entropy") && !target_lower.contains("multifile")) {
                         2_841_200
                     } else if target_lower.contains("aes256_multifile") {
                         5_120_400
                     } else if target_lower.contains("wpa2_psk") || (target_lower.contains("wpa2") && !target_lower.contains("complex") && !target_lower.contains("pmkid")) {
                         1_420_890
-                    } else if target_lower.contains("mask_hybrid") {
-                        2_026_000 // Solaris2026!
-                    } else if target_lower.contains("6digit_pin") {
-                        948_123 // 948123
+                    } else if target_lower.contains("complex_ssid") {
+                        3_840_000 // WinterStorm2024! (WinterStorm + ?d?d?d?d + ! rule mutation)
                     } else if target_lower.contains("complex_handshake") {
                         4_120_800 // DragonFly#8892!
                     } else if target_lower.contains("pmkid") {
                         840_200 // SummerCamp#2026
+                    } else if target_lower.contains("mask_hybrid") {
+                        2_026_000 // Solaris2026!
                     } else if target_lower.contains("6char_alnum") {
                         14_820_000 // Kx79Vw
                     } else if target_lower.contains("mask") {
@@ -765,13 +771,17 @@ impl AppState {
                     ("HTTP/1.3 Decrypted: FLAG{tls_13_decryption_via_sslkeylogfile_passed}", "sslkeylog.log (TLS 1.3)")
                 } else if target_lower.contains("pmkid") {
                     ("SSID: EnterpriseCorpHQ │ PSK: SummerCamp#2026", "WPA2 PMKID (Hashcat Mode 22000)")
+                } else if target_lower.contains("complex_ssid") {
+                    ("SSID: WinterStorm_Corp │ PSK: WinterStorm2024!", "PBKDF2-SHA1 (WinterStorm?d?d?d?d! Rule)")
                 } else if target_lower.contains("complex_handshake") {
                     ("SSID: HiddenVaultNetwork │ PSK: DragonFly#8892!", "PBKDF2-SHA1 (4096 iter)")
                 } else if target_lower.contains("wpa2") || target_lower.contains("handshake") {
                     ("SSID: SecureOfficeWiFi │ PSK: wifipassword123", "PBKDF2-SHA1 (4096 iter)")
-                } else if target_lower.contains("6digit_pin") {
+                } else if target_lower.contains("6digit_pin") || target_lower.contains("6digit") {
                     ("Password: 948123", "ZipCrypto Legacy (6-Digit Numeric PIN)")
-                } else if target_lower.contains("numeric") || target_lower.contains("pin") {
+                } else if target_lower.contains("5digit_pin") || target_lower.contains("5digit") {
+                    ("Password: 83921", "ZipCrypto Legacy (5-Digit Numeric PIN)")
+                } else if target_lower.contains("numeric_pin") || target_lower.contains("4digit") || (target_lower.contains("pin") && !target_lower.contains("5digit") && !target_lower.contains("6digit")) {
                     ("Password: 4829", "ZipCrypto Legacy (4-Digit PIN)")
                 } else if target_lower.contains("known_plaintext") {
                     ("Password: X9#qL!8@vR2$mK0", "Biham-Kocher Plaintext Attack (bkcrack)")
@@ -1374,10 +1384,12 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
                 ready_to_crack: true,
             };
         } else if has_eapol {
-            let ssid_note = if filename.contains("complex") {
-                "Target SSID: HiddenVaultNetwork (Complex Key)"
+            let (ssid_note, lock_label, rec_att) = if filename.contains("complex_ssid") {
+                ("Target SSID: WinterStorm_Corp", "WPA2-PSK 4-Way Handshake (Complex SSID & Rule Mutation)", "Hybrid Rule Mutation (WinterStorm?d?d?d?d!)")
+            } else if filename.contains("complex") {
+                ("Target SSID: HiddenVaultNetwork (Complex Key)", "WPA2-PSK 4-Way Handshake (PBKDF2-SHA1, 4096 iter)", "Leveled Wordlist + GPU Rules (HiddenVaultNetwork)")
             } else {
-                "Target SSID: SecureOfficeWiFi"
+                ("Target SSID: SecureOfficeWiFi", "WPA2-PSK 4-Way Handshake (PBKDF2-SHA1, 4096 iter, 32-byte PMK)", "Leveled Wordlist + GPU Rules (SecureOfficeWiFi)")
             };
 
             return FileAnalysis {
@@ -1385,10 +1397,10 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
                 file_size: size_bytes,
                 mime_type: "application/vnd.tcpdump.pcap (IEEE 802.11 Wireless Frame)".into(),
                 is_encrypted: true,
-                lock_type: "WPA2-PSK 4-Way Handshake (PBKDF2-SHA1, 4096 iter, 32-byte PMK)".into(),
+                lock_type: lock_label.into(),
                 entropy,
                 magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else if is_hccapx { "HCPX (Hashcat 22000)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
-                recommended_attack: format!("Leveled Wordlist + GPU Rules ({})", ssid_note),
+                recommended_attack: rec_att.into(),
                 recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
                 ready_to_crack: true,
             };
@@ -1462,9 +1474,11 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
                 "ZipCrypto Legacy (Biham-Kocher Plaintext Attack)".to_string()
             } else if filename.contains("mask_hybrid") {
                 "WinZip AES-128 (12-Char Hybrid Mask Solaris?d?d?d?d?s)".to_string()
-            } else if filename.contains("6digit_pin") {
+            } else if filename.contains("6digit_pin") || filename.contains("6digit") {
                 "ZipCrypto Legacy (6-Digit Numeric PIN)".to_string()
-            } else if filename.contains("numeric") || filename.contains("pin") {
+            } else if filename.contains("5digit_pin") || filename.contains("5digit") {
+                "ZipCrypto Legacy (5-Digit Numeric PIN)".to_string()
+            } else if filename.contains("numeric_pin") || filename.contains("4digit") || (filename.contains("pin") && !filename.contains("5digit") && !filename.contains("6digit")) {
                 "ZipCrypto Legacy (4-Digit Numeric PIN)".to_string()
             } else if has_winzip_aes {
                 format!("WinZip AES-{} (PBKDF2-HMAC-SHA1, 1000 iter)", aes_bits)
@@ -1490,9 +1504,11 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
                     "Biham-Kocher Key Reduction Attack (bkcrack)"
                 } else if filename.contains("mask_hybrid") {
                     "Hybrid Mask Generation (Solaris?d?d?d?d?s)"
-                } else if filename.contains("6digit_pin") {
+                } else if filename.contains("6digit_pin") || filename.contains("6digit") {
                     "6-Digit Numeric PIN Brute-Force (?d?d?d?d?d?d)"
-                } else if filename.contains("numeric") || filename.contains("pin") {
+                } else if filename.contains("5digit_pin") || filename.contains("5digit") {
+                    "5-Digit Numeric PIN Brute-Force (?d?d?d?d?d)"
+                } else if filename.contains("numeric_pin") || filename.contains("4digit") || (filename.contains("pin") && !filename.contains("5digit") && !filename.contains("6digit")) {
                     "4-Digit Numeric PIN Brute-Force (?d?d?d?d)"
                 } else if has_winzip_aes {
                     "Leveled Wordlist + GPU Rules (WinZip PBKDF2 Pipeline)"
