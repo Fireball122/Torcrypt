@@ -1,4 +1,4 @@
-// app.rs — TORCRYPT AppState: Top 50 Format Support (Hashcat/JtR Parity), Protocol Extractors, Log Scrolling & Real-Time Telemetry
+// app.rs — TORCRYPT AppState: Comprehensive Container & Protocol Inspection, Hashcat/JtR Target Support, Pre-Dispatch Plaintext Filter, Real-Time Telemetry & Zero-Leak Recovery
 use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::Read;
@@ -203,7 +203,7 @@ pub struct AppState {
     // Telemetry & Interactive Log Scrolling
     pub throughput_history: VecDeque<u64>,      // 60 samples
     pub log_ring:           VecDeque<LogEntry>, // 200 entries
-    pub log_scroll_offset:  usize,              // 0 = bottom/live tailing, >0 = scrolled up
+    pub log_scroll_offset:  usize,
 
     // Sessions
     pub sessions:           Vec<Session>,
@@ -353,7 +353,7 @@ impl Default for AppState {
         } else {
             state.add_log(LogLevel::Info, "", "CPU Compute Engine Active (Multi-Threaded Vectorized SIMD)");
         }
-        state.add_log(LogLevel::Info, "", "Torcrypt engine initialized — Top 50 Format Support Active");
+        state.add_log(LogLevel::Info, "", "Torcrypt engine initialized — Pre-Dispatch Ingestion Filter Active");
 
         state.refresh_directory();
         state
@@ -497,7 +497,7 @@ impl AppState {
         self.items_done    = 0;
         self.elapsed_secs  = 0.0;
         self.found_key     = None;
-        self.log_scroll_offset = 0; // Reset log view to live stream
+        self.log_scroll_offset = 0;
 
         let target_lower = self.target_path.to_lowercase();
 
@@ -611,7 +611,6 @@ impl AppState {
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
 
-        // 1. Advance splash screen animation if active
         if self.in_splash {
             static FRAME_DELAYS_MS: [u64; 13] = [
                 500, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 1000
@@ -627,7 +626,6 @@ impl AppState {
             return;
         }
 
-        // 2. Worker execution loop
         if self.worker_state == WorkerState::Running {
             let base_speed = match self.active_engine {
                 ComputeEngine::GpuPrimary  => 18_450.0,
@@ -736,7 +734,6 @@ impl AppState {
                     &format!("Task Finished in {:.1}s │ Committed to SQLite session registry", self.elapsed_secs),
                 );
 
-                // Add to Session Registry (Tab 4)
                 let new_ses_id = format!("SES-{}", 1000 + (self.tick % 8999));
                 self.sessions.insert(0, Session {
                     id:           new_ses_id,
@@ -774,7 +771,6 @@ impl AppState {
             }
         }
 
-        // 3. Advance benchmark progress if benchmark is executing
         if self.bench_running && self.bench_progress < 100 {
             self.bench_progress = (self.bench_progress + 2).min(100);
             if self.bench_progress == 100 {
@@ -811,9 +807,8 @@ impl AppState {
             '4' => self.current_tab = Tab::Sessions,
             '5' => self.current_tab = Tab::System,
             '?' => self.show_help = !self.show_help,
-            'q' | 'Q' => {} // handled in main
+            'q' | 'Q' => {}
 
-            // Log scroll reset on dashboard
             'g' | 'G' if self.current_tab == Tab::Dashboard => {
                 self.log_scroll_offset = 0;
             }
@@ -866,7 +861,6 @@ impl AppState {
                     self.analyze_selected_file();
                 }
                 if self.current_tab == Tab::Dashboard {
-                    // Scroll down in activity logs
                     self.log_scroll_offset = self.log_scroll_offset.saturating_sub(1);
                 }
                 if self.current_tab == Tab::Sessions {
@@ -882,7 +876,6 @@ impl AppState {
                     self.analyze_selected_file();
                 }
                 if self.current_tab == Tab::Dashboard {
-                    // Scroll up in activity logs
                     let max_scroll = self.log_ring.len().saturating_sub(5);
                     self.log_scroll_offset = (self.log_scroll_offset + 1).min(max_scroll);
                 }
@@ -1010,10 +1003,29 @@ fn probe_gpu_info() -> (String, String, String, bool) {
     }
 }
 
-// ─── TOP 50 FORMATS: File Magic & Link-Layer Detection ────────────────────────
+// ─── TOP 50 FORMATS & PRE-DISPATCH PLAINTEXT FILTER ───────────────────────────
 
 fn detect_file_badge(path: &Path, name: &str) -> (String, bool) {
     let lower = name.to_lowercase();
+
+    // 1. Explicit Non-Encrypted Helper & Text Extensions
+    if lower.ends_with(".json") || lower.ends_with(".toml") || lower.ends_with(".yaml") || lower.ends_with(".yml") || lower.ends_with(".xml") {
+        return ("⚙ [CONF]".into(), false);
+    }
+    if lower.ends_with(".md") || lower.ends_with(".rst") || lower.ends_with(".txt") || lower.ends_with(".csv") {
+        return ("📄 [DOC]".into(), false);
+    }
+    if lower.ends_with(".crt") || lower.ends_with(".cer") || lower.ends_with(".pem") || lower.ends_with(".pub") {
+        return ("📜 [CERT]".into(), false);
+    }
+    if lower.ends_with(".log") {
+        return ("📋 [LOG]".into(), false);
+    }
+    if lower.ends_with(".rs") || lower.ends_with(".cpp") || lower.ends_with(".c") || lower.ends_with(".h") || lower.ends_with(".py") || lower.ends_with(".sh") || lower.ends_with(".bat") || lower.ends_with(".ps1") {
+        return ("💻 [CODE]".into(), false);
+    }
+
+    // 2. Cryptographic & Protocol Targets
     if lower.ends_with(".zip") {
         ("🔒 [ZIP]".into(), true)
     } else if lower.contains("tls") || lower.contains("https") || lower.contains("ssl") {
@@ -1048,14 +1060,14 @@ fn detect_file_badge(path: &Path, name: &str) -> (String, bool) {
         ("🍎 [DMG]".into(), true)
     } else if lower.ends_with(".wallet") || lower.ends_with(".dat") || lower.contains("keystore") {
         ("🪙 [COIN]".into(), true)
-    } else if lower.ends_with(".p12") || lower.ends_with(".pfx") || lower.ends_with(".pem") || lower.ends_with(".key") {
+    } else if lower.ends_with(".p12") || lower.ends_with(".pfx") {
         ("🔑 [CERT]".into(), true)
     } else if lower.ends_with(".enc") || lower.ends_with(".aes") || lower.ends_with(".vault") {
         ("🔐 [ENC]".into(), true)
-    } else if lower.ends_with(".hash") || lower.ends_with(".txt") {
-        ("🔑 [TXT]".into(), false)
+    } else if lower.ends_with(".hash") {
+        ("🔑 [HASH]".into(), true)
     } else {
-        ("📄 [OCTET]".into(), true)
+        ("📄 [FILE]".into(), false)
     }
 }
 
@@ -1100,6 +1112,43 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
     let entropy = calculate_shannon_entropy(slice);
     let hex_header = slice.iter().take(8).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
     let filename = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+
+    // ── PRE-DISPATCH FILTER: Plaintext Documentation, Keys & Logs ────────────
+    let is_json = filename.ends_with(".json") || slice.starts_with(b"{") || slice.starts_with(b"[");
+    let is_md_doc = filename.ends_with(".md") || filename.ends_with(".txt") || filename.ends_with(".rst") || filename.ends_with(".log");
+    let is_cert = filename.ends_with(".crt") || filename.ends_with(".cer") || slice.starts_with(b"-----BEGIN CERTIFICATE-----");
+    let is_pem_key = filename.ends_with(".pem") || filename.ends_with(".key") || slice.starts_with(b"-----BEGIN RSA PRIVATE KEY-----") || slice.starts_with(b"-----BEGIN PRIVATE KEY-----");
+    let is_sslkeylog = filename.contains("sslkeylog") || slice.starts_with(b"CLIENT_TRAFFIC_SECRET_0") || slice.starts_with(b"SERVER_TRAFFIC_SECRET_0");
+    let is_code = filename.ends_with(".rs") || filename.ends_with(".cpp") || filename.ends_with(".c") || filename.ends_with(".h") || filename.ends_with(".py") || filename.ends_with(".sh") || filename.ends_with(".toml") || filename.ends_with(".lock") || filename.ends_with(".yaml") || filename.ends_with(".yml");
+
+    if is_json || is_md_doc || is_cert || is_pem_key || is_sslkeylog || is_code {
+        let (desc, mime) = if is_json {
+            ("JSON Configuration / Manifest Data", "application/json")
+        } else if is_cert {
+            ("X.509 Public Certificate (No Private Key)", "application/x-x509-ca-cert")
+        } else if is_pem_key {
+            ("Unencrypted PEM Private Key Block", "application/x-pem-file")
+        } else if is_sslkeylog {
+            ("TLS Ephemeral SSLKEYLOG File (Decryption Key Source)", "text/plain")
+        } else if is_code {
+            ("Source Code / Build Configuration", "text/plain")
+        } else {
+            ("Plaintext Documentation / Text File", "text/markdown")
+        };
+
+        return FileAnalysis {
+            file_path: path.to_string_lossy().to_string(),
+            file_size: size_bytes,
+            mime_type: mime.into(),
+            is_encrypted: false,
+            lock_type: desc.into(),
+            entropy,
+            magic_header: hex_header,
+            recommended_attack: "File is not an encrypted container (ready_to_crack: false)".into(),
+            recommended_engine: ComputeEngine::CpuSimd,
+            ready_to_crack: false, // PREVENTS FALSE POSITIVE RECOVERY LAUNCH
+        };
+    }
 
     // ── 1. PCAP / PCAPNG Network Captures (Top Network Formats) ───────────────
     let is_pcap_le = slice.starts_with(&[0xD4, 0xC3, 0xB2, 0xA1]);
@@ -1415,8 +1464,7 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
         };
     }
 
-    // ── 10. Raw Hashes & Universal Octet Streams (Top 50 Formats) ─────────────
-    let is_txt = filename.ends_with(".txt") || filename.ends_with(".hash") || filename.ends_with(".lst");
+    // ── 10. Raw Hashes & Universal Octet Streams ─────────────────────────────
     let (mime, lock, is_enc, rec_att) = if slice.len() == 32 && slice.iter().all(|b| b.is_ascii_hexdigit()) {
         ("text/plain (MD5 / NTLM Hash Digest)", "Raw MD5 / NTLM Hash (128-bit)", true, "High-Speed GPU Warp Brute-Force / Rules")
     } else if slice.len() == 64 && slice.iter().all(|b| b.is_ascii_hexdigit()) {
@@ -1429,10 +1477,8 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
         ("text/plain (Kerberos 5 Ticket)", "Kerberos 5 TGS/AS-REP (etype 23 RC4-HMAC)", true, "GPU Wordlist + Rule Permutation Engine")
     } else if entropy > 7.75 {
         ("application/octet-stream (High-Entropy Binary)", "Cryptographic Vault (High Entropy Payload)", true, "Vectorized SIMD / GPU Warp Brute-Force")
-    } else if is_txt {
-        ("text/plain (Candidate Wordlist / Hash List)", "Plaintext Dictionary List", false, "Use as Dictionary / Wordlist Source in Tab 1")
     } else {
-        ("application/octet-stream (Universal Raw Container)", "Raw Octet-Stream Container", true, "Universal GPU/CPU Recovery Engine (Top 50 Mode)")
+        ("application/octet-stream (Plaintext Binary / Data)", "Unencrypted Binary Data (No Cryptographic Header)", false, "File is not an encrypted target")
     };
 
     FileAnalysis {
