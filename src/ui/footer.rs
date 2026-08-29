@@ -38,10 +38,10 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
             spans.push(key("← / Bksp"));
             spans.push(label("Back"));
             spans.push(key("Tab"));
-            spans.push(label("Strategy"));
+            spans.push(label("Tier"));
             if app.analysis.ready_to_crack {
                 spans.push(key("A / Space"));
-                spans.push(label("Launch Recovery"));
+                spans.push(label("Launch"));
             }
         }
         Tab::Dashboard => {
@@ -54,6 +54,12 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
             spans.push(label(pause_label));
             spans.push(key("C"));
             spans.push(label("Cancel"));
+            spans.push(key("PgUp/Dn or J/K"));
+            spans.push(label("Scroll Log"));
+            if app.log_scroll_offset > 0 {
+                spans.push(key("G / End"));
+                spans.push(label("Live Tail"));
+            }
         }
         Tab::Benchmark => {
             spans.push(key("B"));

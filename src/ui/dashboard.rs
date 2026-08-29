@@ -1,5 +1,5 @@
 // ui/dashboard.rs — 40/60 Responsive 2-Column Grid: Worker Card + Progress |
-//                   Sparkline Throughput + Auto-Scrolling Activity Stream
+//                   Sparkline Throughput + Interactive Scrollable Activity Stream
 use crate::app::{AppState, ComputeEngine, LogLevel, WorkerState};
 use crate::ui::theme;
 use ratatui::{
@@ -350,28 +350,53 @@ fn render_sparkline(frame: &mut Frame, area: Rect, app: &AppState) {
     frame.render_widget(spark, area);
 }
 
+// ─── INTERACTIVE SCROLLABLE ACTIVITY STREAM ──────────────────────────────────
+
 fn render_activity_stream(frame: &mut Frame, area: Rect, app: &AppState) {
-    let block = Block::default()
-        .title(Line::from(vec![
+    let scroll_badge = if app.log_scroll_offset > 0 {
+        Line::from(vec![
             Span::raw("─ ◈ "),
             Span::styled("ENGINE ACTIVITY STREAM", theme::style_title()),
-        ]))
+            Span::styled(format!("  [▲ ▼ SCROLLED UP +{} │ J/K or PgUp/PgDn │ G: Snap Bottom] ", app.log_scroll_offset), theme::style_amber()),
+        ])
+    } else {
+        Line::from(vec![
+            Span::raw("─ ◈ "),
+            Span::styled("ENGINE ACTIVITY STREAM", theme::style_title()),
+            Span::styled("  [LIVE AUTO-SCROLL │ J/K or PgUp/PgDn to scroll] ", theme::style_subtext()),
+        ])
+    };
+
+    let block = Block::default()
+        .title(scroll_badge)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme::style_border());
+        .border_style(if app.log_scroll_offset > 0 {
+            theme::style_amber()
+        } else {
+            theme::style_border()
+        });
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let max_rows = inner.height as usize;
-    let logs: Vec<_> = app
-        .log_ring
-        .iter()
-        .rev()
-        .take(max_rows)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
+    let total_logs = app.log_ring.len();
+
+    // Calculate window slice based on interactive scroll offset
+    let logs: Vec<_> = if total_logs <= max_rows {
+        app.log_ring.iter().collect()
+    } else {
+        let skip_from_end = app.log_scroll_offset;
+        app.log_ring
+            .iter()
+            .rev()
+            .skip(skip_from_end)
+            .take(max_rows)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    };
 
     let col_w = inner.width.saturating_sub(12) as usize;
 

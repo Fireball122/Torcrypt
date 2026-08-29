@@ -1,5 +1,5 @@
 #![allow(dead_code, unused_variables)]
-// main.rs — TORCRYPT TUI Entry Point: Crossterm raw mode + 30 FPS event loop
+// main.rs — TORCRYPT TUI Entry Point: Crossterm raw mode + 30 FPS event loop with Interactive Log Scrolling
 mod app;
 mod ui;
 
@@ -15,7 +15,6 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 fn main() -> io::Result<()> {
-    // ── Setup terminal ────────────────────────────────────────────────────────
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -23,14 +22,13 @@ fn main() -> io::Result<()> {
     let mut term = Terminal::new(backend)?;
     term.hide_cursor()?;
 
-    // Drain any residual startup keystrokes (e.g. Enter pressed in PowerShell/cmd)
+    // Drain residual startup keystrokes
     while event::poll(Duration::from_millis(50))? {
         let _ = event::read()?;
     }
 
     let result = run(&mut term);
 
-    // ── Teardown terminal ─────────────────────────────────────────────────────
     disable_raw_mode()?;
     execute!(term.backend_mut(), LeaveAlternateScreen)?;
     term.show_cursor()?;
@@ -43,29 +41,23 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
     let mut last_tick = Instant::now();
 
     loop {
-        // ── Draw frame ────────────────────────────────────────────────────────
         term.draw(|frame| ui::render(frame, &mut app))?;
 
-        // ── Non-blocking input poll (remainder of 33ms frame budget) ─────────
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) => {
-                    // Ignore KeyRelease and KeyRepeat events on Windows
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
 
-                    // Ctrl+C always exits immediately
                     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                         return Ok(());
                     }
 
-                    // If currently displaying startup animation:
                     if app.in_splash {
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(()),
-                            // Require at least 1.0s elapsed before allowing Space/Enter/Esc to skip
                             KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
                                 if app.splash_start_time.elapsed().as_millis() >= 1000 {
                                     app.in_splash = false;
@@ -76,7 +68,6 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                         continue;
                     }
 
-                    // Main view keyboard handling
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Char('Q')
                             if !app.search_mode && !app.show_help =>
@@ -86,6 +77,28 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                         KeyCode::Esc => {
                             app.show_help   = false;
                             app.search_mode = false;
+                        }
+                        KeyCode::PageUp => {
+                            if app.current_tab == Tab::Dashboard {
+                                let max_scroll = app.log_ring.len().saturating_sub(5);
+                                app.log_scroll_offset = (app.log_scroll_offset + 8).min(max_scroll);
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            if app.current_tab == Tab::Dashboard {
+                                app.log_scroll_offset = app.log_scroll_offset.saturating_sub(8);
+                            }
+                        }
+                        KeyCode::Home => {
+                            if app.current_tab == Tab::Dashboard {
+                                let max_scroll = app.log_ring.len().saturating_sub(5);
+                                app.log_scroll_offset = max_scroll;
+                            }
+                        }
+                        KeyCode::End => {
+                            if app.current_tab == Tab::Dashboard {
+                                app.log_scroll_offset = 0; // Snap to bottom live stream
+                            }
                         }
                         KeyCode::Enter if app.search_mode => {
                             app.search_mode = false;
@@ -115,6 +128,10 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                                 app.file_selected_idx -= 1;
                                 app.analyze_selected_file();
                             }
+                            if app.current_tab == Tab::Dashboard {
+                                let max_scroll = app.log_ring.len().saturating_sub(5);
+                                app.log_scroll_offset = (app.log_scroll_offset + 1).min(max_scroll);
+                            }
                             if app.current_tab == Tab::Sessions && app.sessions_selected > 0 {
                                 app.sessions_selected -= 1;
                             }
@@ -126,6 +143,9 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                             if app.current_tab == Tab::Analyze && !app.dir_entries.is_empty() {
                                 app.file_selected_idx = (app.file_selected_idx + 1).min(app.dir_entries.len().saturating_sub(1));
                                 app.analyze_selected_file();
+                            }
+                            if app.current_tab == Tab::Dashboard {
+                                app.log_scroll_offset = app.log_scroll_offset.saturating_sub(1);
                             }
                             if app.current_tab == Tab::Sessions {
                                 app.sessions_selected = (app.sessions_selected + 1)
@@ -145,7 +165,6 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
             }
         }
 
-        // ── Advance clock tick at 30 FPS ──────────────────────────────────────
         if last_tick.elapsed() >= tick_rate {
             app.on_tick();
             last_tick = Instant::now();
