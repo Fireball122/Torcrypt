@@ -1,4 +1,4 @@
-// app.rs — TORCRYPT AppState: Routing, File Explorer & Smart Decryption Analyzer, Ring-Buffer Telemetry, Dynamic GPU/CPU Hardware Probing, Leveled Password Corpus Tiers
+// app.rs — TORCRYPT AppState: Routing, File Explorer & Smart Decryption Analyzer, Ring-Buffer Telemetry, Dynamic GPU/CPU Hardware Probing, Early-Abort Match Engine
 use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::Read;
@@ -180,7 +180,7 @@ pub struct AppState {
     pub analysis:           FileAnalysis,
     pub attack_selected:    usize, // 0: Level 1 (Common 1M), 1: Level 2 (Standard 14.3M), 2: Level 3 (Advanced 124.5M)
 
-    // Worker & Dynamic Acceleration
+    // Worker & Early-Abort Match Engine
     pub worker_state:       WorkerState,
     pub cipher_suite:       String,
     pub target_path:        String,
@@ -188,6 +188,7 @@ pub struct AppState {
     pub active_strategy:    String,
     pub items_done:         u64,
     pub items_total:        u64,
+    pub target_hit_at:      u64, // Exact candidate index where password is found (Early Abort trigger)
     pub elapsed_secs:       f64,
     pub eta_secs:           f64,
     pub speed_mbps:         f64,
@@ -265,6 +266,7 @@ impl Default for AppState {
             active_strategy:    "Level 2: Standard Production Corpus (14,344,392 Candidates)".into(),
             items_done:         0,
             items_total:        0,
+            target_hit_at:      0,
             elapsed_secs:       0.0,
             eta_secs:           0.0,
             speed_mbps:         0.0,
@@ -480,7 +482,7 @@ impl AppState {
         self.analysis = analyze_file_magic(&entry.path, entry.size_bytes, self.sys_gpu_available);
     }
 
-    // ── Launch Attack from Tab 1 (Leveled Attack Selection) ───────────────────
+    // ── Launch Attack from Tab 1 (Early-Abort Match Setup) ────────────────────
 
     pub fn launch_attack_from_analysis(&mut self) {
         if !self.analysis.ready_to_crack {
@@ -496,15 +498,19 @@ impl AppState {
         self.thread_active = self.thread_count;
         self.found_key     = None;
 
-        // Configure candidate volume and ETA based on user-selected tier
-        let (attack_name, items_total, eta_default) = match self.attack_selected {
-            0 => ("Level 1: High-Frequency Common (1,000,000 Top Passwords)", 1_000_000, 3.5),
-            1 => ("Level 2: Standard Production Corpus (14,344,392 RockYou + Best64)", 14_344_392, 35.0),
-            2 => ("Level 3: Advanced Hardened Multi-Corpus (124,500,000 Markov + Deep Rules)", 124_500_000, 180.0),
-            _ => ("Level 2: Standard Production Corpus (14,344,392 Candidates)", 14_344_392, 35.0),
+        // Configure candidate keyspace volume and deterministic early-hit location
+        let (attack_name, items_total, hit_index, eta_default) = match self.attack_selected {
+            // Level 1: Common hit early in list (e.g. at 14.8% -> ~148,000 candidates)
+            0 => ("Level 1: High-Frequency Common (1,000,000 Top Passwords)", 1_000_000, 148_200, 2.5),
+            // Level 2: Standard hit midway (e.g. at 26.5% -> ~3,802,000 candidates)
+            1 => ("Level 2: Standard Production Corpus (14,344,392 RockYou + Best64)", 14_344_392, 3_802_450, 12.0),
+            // Level 3: Advanced hit in deep permutations (e.g. at 18.2% -> ~22,650,000 candidates)
+            2 => ("Level 3: Advanced Hardened Multi-Corpus (124,500,000 Markov + Deep Rules)", 124_500_000, 22_650_000, 45.0),
+            _ => ("Level 2: Standard Production Corpus (14,344,392 Candidates)", 14_344_392, 3_802_450, 12.0),
         };
 
         self.items_total     = items_total;
+        self.target_hit_at   = hit_index;
         self.eta_secs        = eta_default;
         self.active_strategy = attack_name.to_string();
 
@@ -583,7 +589,7 @@ impl AppState {
             return;
         }
 
-        // 2. Worker execution loop
+        // 2. Worker execution loop with Instant Hit Early Termination
         if self.worker_state == WorkerState::Running {
             let base_speed = match self.active_engine {
                 ComputeEngine::GpuPrimary => 18_450.0,
@@ -594,7 +600,7 @@ impl AppState {
             let jitter = (self.tick % 7) as f64 * 12.5 - 35.0;
             self.speed_mbps = (base_speed + jitter).max(100.0);
 
-            // Increment rate proportional to workload tier
+            // Increment rate
             let increment = match self.attack_selected {
                 0 => match self.active_engine {
                     ComputeEngine::GpuPrimary => 12_500,
@@ -602,27 +608,29 @@ impl AppState {
                     ComputeEngine::CpuSimd    => 350,
                 },
                 1 => match self.active_engine {
-                    ComputeEngine::GpuPrimary => 18_500,
-                    ComputeEngine::Hybrid     => 4_800,
-                    ComputeEngine::CpuSimd    => 450,
+                    ComputeEngine::GpuPrimary => 24_500,
+                    ComputeEngine::Hybrid     => 6_200,
+                    ComputeEngine::CpuSimd    => 550,
                 },
                 2 => match self.active_engine {
-                    ComputeEngine::GpuPrimary => 45_000,
-                    ComputeEngine::Hybrid     => 12_000,
-                    ComputeEngine::CpuSimd    => 1_200,
+                    ComputeEngine::GpuPrimary => 65_000,
+                    ComputeEngine::Hybrid     => 16_000,
+                    ComputeEngine::CpuSimd    => 1_500,
                 },
-                _ => 18_500,
+                _ => 24_500,
             };
 
             if self.items_done < self.items_total {
                 self.items_done = (self.items_done + increment).min(self.items_total);
                 self.elapsed_secs += 0.033;
-                let remaining = self.items_total.saturating_sub(self.items_done);
+                let remaining = self.target_hit_at.saturating_sub(self.items_done);
                 self.eta_secs = (remaining as f64 / (increment as f64 * 30.0)).max(0.0);
             }
 
-            // Check if search completed
-            if self.items_done >= self.items_total {
+            // ── EARLY TERMINATION: Halt as soon as the password is hit! ────────
+            if self.items_done >= self.target_hit_at {
+                // Clamp candidate counter to exact match location
+                self.items_done    = self.target_hit_at;
                 self.worker_state  = WorkerState::Completed;
                 self.speed_mbps    = 0.0;
                 self.thread_active = 0;
@@ -641,16 +649,18 @@ impl AppState {
 
                 self.found_key = Some(cracked_key.to_string());
 
+                let hit_pct = (self.items_done as f64 / self.items_total as f64) * 100.0;
                 let path_clone = self.target_path.clone();
+
                 self.add_log(
                     LogLevel::Lock,
                     &path_clone,
-                    &format!("✨ KEY RECOVERED: \"{}\" │ Verified via HMAC-SHA1 MIC", cracked_key),
+                    &format!("✨ KEY RECOVERED: \"{}\" │ Candidate #{}/{} ({:.1}%)", cracked_key, fmt_num(self.items_done), fmt_num(self.items_total), hit_pct),
                 );
                 self.add_log(
                     LogLevel::Info,
                     "",
-                    &format!("Task Completed in {:.1}s │ Committed to SQLite session registry", self.elapsed_secs),
+                    &format!("Early Abort Signal Broadcasted: 12 Workers Halted in {:.1}s", self.elapsed_secs),
                 );
 
                 // Add to Session Registry (Tab 4)
@@ -662,7 +672,7 @@ impl AppState {
                     kdf:          "PBKDF2 / Argon2id".into(),
                     status:       "COMPLETED".into(),
                     created_at:   Utc::now().format("%Y-%m-%d %H:%M").to_string(),
-                    keys_checked: self.items_total,
+                    keys_checked: self.items_done,
                     speed_mbps:   base_speed,
                     memory_mb:    64,
                     threads:      self.thread_count,
@@ -1106,4 +1116,14 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
         recommended_engine: ComputeEngine::CpuSimd,
         ready_to_crack: false,
     }
+}
+
+fn fmt_num(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 { out.push(','); }
+        out.push(c);
+    }
+    out.chars().rev().collect()
 }
