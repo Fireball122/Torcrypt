@@ -1,55 +1,44 @@
-// ui/header.rs — Branded badge | 5-Tab selector pills | Live UTC clock & engine status
+// ui/header.rs — Cyberpunk top navigation bar with UTC clock and dirty-state tab indicators
 use crate::app::{AppState, Tab, WorkerState};
 use crate::ui::theme;
 use chrono::Utc;
 use ratatui::{
-    layout::{Alignment, Constraint, Layout},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
-pub fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppState) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme::style_border());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    // Split inner row into: [brand badge] [tab pills] [status + clock]
+pub fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
     let cols = Layout::horizontal([
-        Constraint::Length(18),   // brand badge
-        Constraint::Min(0),       // tab pills (center)
-        Constraint::Length(28),   // clock + status
+        Constraint::Length(28), // Left: Cyberpunk Banner Title
+        Constraint::Min(0),     // Center: Tab Badges
+        Constraint::Length(24), // Right: Engine Status + Live UTC Clock
     ])
-    .split(inner);
+    .split(area);
 
-    // ── Left: Brand Badge ─────────────────────────────────────────────────────
-    let badge = Paragraph::new(Line::from(vec![
-        Span::styled(" 🔐 ", Style::default()),
-        Span::styled("TORCRYPT", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::styled(" v0.1.0", Style::default().fg(Color::DarkGray)),
-    ]))
-    .alignment(Alignment::Left);
-    frame.render_widget(badge, cols[0]);
+    // ── Left: App Title Badge ──────────────────────────────────────────────────
+    let title_line = Line::from(vec![
+        Span::styled(" ◈ TORCRYPT ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" v0.1.16 ", Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)),
+    ]);
+    let title = Paragraph::new(title_line).alignment(Alignment::Left);
+    frame.render_widget(title, cols[0]);
 
-    // ── Center: 5-Tab Selector Pills ──────────────────────────────────────────
-    fn tab_span(label: &str, tab: Tab, current: Tab) -> Span<'static> {
-        let text = format!(" {label} ");
-        let label_owned = text.clone();
+    // ── Center: Tab Navigation Badges ──────────────────────────────────────────
+    fn tab_span<'a>(label: &'a str, tab: Tab, current: Tab) -> Span<'a> {
         if tab == current {
             Span::styled(
-                label_owned,
+                format!("  {}  ", label),
                 Style::default()
                     .fg(Color::Black)
-                    .bg(Color::Cyan)
+                    .bg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             )
         } else {
             Span::styled(
-                label_owned,
+                format!("  {}  ", label),
                 Style::default()
                     .fg(Color::DarkGray)
                     .bg(Color::Indexed(237)),
@@ -74,11 +63,12 @@ pub fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
 
     // ── Right: Status + UTC Clock ─────────────────────────────────────────────
     let (status_icon, status_style) = match app.worker_state {
-        WorkerState::Idle      => ("● STANDBY", theme::style_neon()),
-        WorkerState::Running   => ("● RUNNING", theme::style_neon()),
-        WorkerState::Paused    => ("⏸ PAUSED",  theme::style_amber()),
-        WorkerState::Stopped   => ("■ STOPPED", theme::style_red()),
-        WorkerState::Completed => ("✔ DONE",    theme::style_neon()),
+        WorkerState::Idle      => ("● STANDBY",   theme::style_neon()),
+        WorkerState::Running   => ("● RUNNING",   theme::style_neon()),
+        WorkerState::Paused    => ("⏸ PAUSED",    theme::style_amber()),
+        WorkerState::Stopped   => ("■ STOPPED",   theme::style_red()),
+        WorkerState::Completed => ("✨ FOUND",     theme::style_neon()),
+        WorkerState::Exhausted => ("❌ EXHAUSTED", theme::style_amber()),
     };
 
     let now = Utc::now().format("%H:%M:%S UTC").to_string();

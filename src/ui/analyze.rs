@@ -282,19 +282,19 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         return;
     }
 
-    // Leveled attack tiers: Level 1 (Common 1M), Level 2 (Standard 14.3M), Level 3 (Advanced 124.5M)
+    // Leveled attack tiers: Level 1 (10k), Level 2 (14.34M RockYou), Level 3 (100M+ Advanced Rules/Masks)
     let tiers = [
         (
-            "Level 1: High-Frequency Common (1,000,000 Passwords)",
-            "Top 100k + Top Wi-Fi defaults + Router OEM wordlists + 4-8 digit numeric PINs  (~1-3s)",
+            "Level 1: High-Frequency Common (10,000 Passwords)",
+            "Top 10,000 Passwords + Common Wi-Fi defaults + 4-digit PINs (Instant check)  (~0.1s - 1s)",
         ),
         (
             "Level 2: Standard Production Corpus (14,344,392 Candidates)",
-            "RockYou full corpus + Best64 permutation mutation rules (General real-world use)  (~30s)",
+            "RockYou full corpus + Best64 permutation mutation rules (General real-world use)  (~5-15s)",
         ),
         (
-            "Level 3: Advanced Hardened Multi-Corpus (124,500,000 Keyspace)",
-            "Multi-corpus (CrackStation + SecLists) + Markov n-grams + Deep hybrid leet rules  (~2-3m)",
+            "Level 3: Advanced Hardened Multi-Corpus (100,000,000+ Keyspace)",
+            "Multi-corpus + Markov n-grams + Hybrid rule mutations + Custom masks + KPA  (~30-60s)",
         ),
     ];
 
@@ -338,9 +338,9 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         .border_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
 
     let tier_label = match app.attack_selected {
-        0 => "LEVEL 1 (1M COMMON)",
+        0 => "LEVEL 1 (10K COMMON)",
         1 => "LEVEL 2 (14.3M STANDARD)",
-        2 => "LEVEL 3 (124.5M ADVANCED)",
+        2 => "LEVEL 3 (100M+ ADVANCED)",
         _ => "LEVEL 2",
     };
 
@@ -366,11 +366,11 @@ fn truncate(s: &str, max: usize) -> String {
 
 fn fmt_file_size(bytes: u64) -> String {
     if bytes >= 1024 * 1024 * 1024 {
-        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+        format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     } else if bytes >= 1024 * 1024 {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     } else if bytes >= 1024 {
-        format!("{:.0} KB", bytes as f64 / 1024.0)
+        format!("{:.1} KB", bytes as f64 / 1024.0)
     } else {
         format!("{} B", bytes)
     }

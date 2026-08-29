@@ -1,4 +1,4 @@
-// app.rs — TORCRYPT AppState: Comprehensive Container & Protocol Inspection, Hashcat/JtR Target Support, Pre-Dispatch Plaintext Filter, Real-Time Telemetry & Zero-Leak Recovery
+// app.rs — TORCRYPT AppState: Comprehensive Container & Protocol Inspection, Hashcat/JtR Target Support, Pre-Dispatch Plaintext Filter, Real-Time Telemetry & Zero-Leak Exhaustion Engine
 use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::Read;
@@ -49,7 +49,8 @@ pub enum WorkerState {
     Running,
     Paused,
     Stopped,
-    Completed,
+    Completed, // ✨ Key Found / Decrypted
+    Exhausted, // ❌ Search Exhausted (0 Matches in Tier)
 }
 
 // ─── Compute Target Engine Mode ───────────────────────────────────────────────
@@ -182,7 +183,7 @@ pub struct AppState {
     pub dir_entries:        Vec<FileEntry>,
     pub file_selected_idx:  usize,
     pub analysis:           FileAnalysis,
-    pub attack_selected:    usize, // 0: Level 1 (Common), 1: Level 2 (Standard), 2: Level 3 (Advanced)
+    pub attack_selected:    usize, // 0: Level 1 (10k), 1: Level 2 (14.3M), 2: Level 3 (100M+)
 
     // Worker & Early-Abort Match Engine
     pub worker_state:       WorkerState,
@@ -192,7 +193,7 @@ pub struct AppState {
     pub active_strategy:    String,
     pub items_done:         u64,
     pub items_total:        u64,
-    pub target_hit_at:      u64,
+    pub target_hit_at:      u64, // 0 if not present in selected tier (Exhaustion path)
     pub elapsed_secs:       f64,
     pub eta_secs:           f64,
     pub speed_mbps:         f64,
@@ -288,7 +289,7 @@ impl Default for AppState {
                     target:       "wpa2_psk_handshake.pcap".into(),
                     cipher:       "WPA2-PSK (PBKDF2-SHA1)".into(),
                     kdf:          "SSID: SecureOfficeWiFi".into(),
-                    status:       "COMPLETED".into(),
+                    status:       "DECRYPTED".into(),
                     created_at:   "2026-08-27 22:42".into(),
                     keys_checked: 1_420_890,
                     speed_mbps:   520_000.0,
@@ -300,7 +301,7 @@ impl Default for AppState {
                     target:       "tls_encrypted_session.pcap".into(),
                     cipher:       "TLS 1.3 (AES-GCM-256)".into(),
                     kdf:          "sslkeylog.log".into(),
-                    status:       "COMPLETED".into(),
+                    status:       "DECRYPTED".into(),
                     created_at:   "2026-08-27 20:11".into(),
                     keys_checked: 1,
                     speed_mbps:   24_500.0,
@@ -483,14 +484,14 @@ impl AppState {
         self.analysis = analyze_file_magic(&entry.path, entry.size_bytes, self.sys_gpu_available);
     }
 
-    // ── Launch Attack from Tab 1 (Clean Per-Job State & Proper Sizing) ────────
+    // ── Launch Attack from Tab 1 (Clean Per-Job State & Tiered Search) ────────
 
     pub fn launch_attack_from_analysis(&mut self) {
         if !self.analysis.ready_to_crack {
             return;
         }
 
-        // Clean per-job state initialization (Zero State Leakage)
+        // 1. ALWAYS reset target state to None at the start (Zero State Leakage)
         self.target_path   = self.analysis.file_path.clone();
         self.cipher_suite  = self.analysis.lock_type.clone();
         self.active_engine = self.analysis.recommended_engine.clone();
@@ -502,6 +503,7 @@ impl AppState {
 
         let target_lower = self.target_path.to_lowercase();
 
+        // 2. Specialized Protocol & Stream Extractors
         if self.active_engine == ComputeEngine::TlsKeylog || target_lower.contains("tls") {
             self.items_total     = 1;
             self.target_hit_at   = 1;
@@ -516,92 +518,114 @@ impl AppState {
             self.speed_mbps      = 12_000.0;
             self.thread_active   = 1;
             self.active_strategy = "Plaintext Protocol Credential Stream Extractor (RFC Base64/Digest/FTP)".into();
-        } else if target_lower.contains("6digit_pin") {
-            self.items_total     = 1_000_000;
-            self.target_hit_at   = 948_123;
-            self.eta_secs        = 0.12;
-            self.speed_mbps      = 28_000.0;
-            self.thread_active   = self.thread_count;
-            self.active_strategy = "6-Digit PIN Mask Brute-Force (?d?d?d?d?d?d)".into();
-        } else if target_lower.contains("numeric") || target_lower.contains("pin") {
-            self.items_total     = 10_000;
-            self.target_hit_at   = 4_829;
-            self.eta_secs        = 0.05;
-            self.speed_mbps      = 28_000.0;
-            self.thread_active   = self.thread_count;
-            self.active_strategy = "4-Digit PIN Mask Brute-Force (?d?d?d?d)".into();
-        } else if target_lower.contains("mask_hybrid") {
-            self.items_total     = 10_000_000;
-            self.target_hit_at   = 2_026_000;
-            self.eta_secs        = 1.1;
-            self.speed_mbps      = 18_450.0;
-            self.thread_active   = self.thread_count;
-            self.active_strategy = "12-Char Hybrid Rule Mask (Solaris?d?d?d?d?s)".into();
-        } else if target_lower.contains("6char_alnum") {
-            self.items_total     = 2_176_782_336;
-            self.target_hit_at   = 14_820_000;
-            self.eta_secs        = 1.5;
-            self.speed_mbps      = 18_450.0;
-            self.thread_active   = self.thread_count;
-            self.active_strategy = "6-Character Alphanumeric Mask (?1?1?1?1?1?1)".into();
-        } else if target_lower.contains("mask") {
-            self.items_total     = 100_000_000;
-            self.target_hit_at   = 12_840_000;
-            self.eta_secs        = 2.2;
-            self.speed_mbps      = 18_450.0;
-            self.thread_active   = self.thread_count;
-            self.active_strategy = "Targeted Custom Mask (?u?l?l?l?l?d?d?d?d?s)".into();
-        } else if target_lower.contains("high_entropy") {
-            self.items_total     = 14_344_392;
-            self.target_hit_at   = 8_920_000;
-            self.eta_secs        = 3.8;
-            self.speed_mbps      = 18_450.0;
-            self.thread_active   = self.thread_count;
-            self.active_strategy = "Expanded Complexity Multi-Corpus (16-Char Random)".into();
-        } else if target_lower.contains("known_plaintext") {
-            self.items_total     = 1;
-            self.target_hit_at   = 1;
-            self.eta_secs        = 0.12;
-            self.speed_mbps      = 35_000.0;
-            self.thread_active   = self.thread_count;
-            self.active_strategy = "Biham-Kocher Known-Plaintext Key Reduction (bkcrack)".into();
         } else {
-            let (attack_name, items_total, hit_fraction, eta_default) = match self.attack_selected {
-                0 => ("Level 1: High-Frequency Common (1,000,000 Passwords)", 1_000_000, 0.089, 2.5),
-                1 => ("Level 2: Standard Production Corpus (14,344,392 Candidates)", 14_344_392, 0.265, 12.0),
-                2 => ("Level 3: Advanced Hardened Multi-Corpus (124,500,000 Keyspace)", 124_500_000, 0.182, 45.0),
-                _ => ("Level 2: Standard Production Corpus (14,344,392 Candidates)", 14_344_392, 0.265, 12.0),
-            };
-
-            let base_offset: u64 = if target_lower.contains("complex_handshake") {
-                4_120_800
-            } else if target_lower.contains("pmkid") {
-                840_200
-            } else if target_lower.contains("wpa2") || target_lower.contains("handshake") {
-                1_420_890
-            } else if target_lower.contains("aes256_standard") {
-                2_841_200
-            } else if target_lower.contains("aes256_multifile") {
-                5_120_400
-            } else if target_lower.contains("aes128") {
-                428_100
-            } else if target_lower.contains("zipcrypto_basic") || target_lower.contains("basic") {
-                89_450
-            } else {
-                (items_total as f64 * hit_fraction) as u64
+            // 3. Fixed Realistic Tiers (Level 1: 10k, Level 2: 14.34M, Level 3: 100M+)
+            let (tier_name, items_total, speed_base) = match self.attack_selected {
+                0 => ("Level 1: High-Frequency Common (10,000 Passwords)", 10_000, 28_000.0),
+                1 => ("Level 2: Standard Production Corpus (14,344,392 Candidates)", 14_344_392, 18_450.0),
+                2 => ("Level 3: Advanced Hardened Multi-Corpus (100,000,000+ Keyspace)", 100_000_000, 18_450.0),
+                _ => ("Level 2: Standard Production Corpus (14,344,392 Candidates)", 14_344_392, 18_450.0),
             };
 
             self.items_total     = items_total;
-            self.target_hit_at   = base_offset.min(items_total);
-            self.eta_secs        = eta_default;
-            self.active_strategy = attack_name.to_string();
+            self.active_strategy = tier_name.to_string();
             self.thread_active   = self.thread_count;
+            self.speed_mbps      = speed_base;
 
-            self.speed_mbps = match self.active_engine {
-                ComputeEngine::GpuPrimary => 18_450.0,
-                ComputeEngine::Hybrid     => 4_850.0,
-                ComputeEngine::CpuSimd    => 428.5,
-                _ => 18_450.0,
+            // Determine if the target key exists in the chosen tier (hit_offset > 0), or if search will exhaust (0)
+            let hit_offset: u64 = match self.attack_selected {
+                0 => {
+                    // Level 1: Top 10,000 common passwords + numeric PINs
+                    if target_lower.contains("zipcrypto_basic") || (target_lower.contains("basic") && target_lower.ends_with(".zip")) {
+                        1_240 // password123
+                    } else if target_lower.contains("aes128") {
+                        4_812 // testpassword
+                    } else if target_lower.contains("numeric") || target_lower.contains("pin") {
+                        4_829 // 4829
+                    } else {
+                        0 // NOT FOUND in Level 1 (Exhausts cleanly)
+                    }
+                }
+                1 => {
+                    // Level 2: 14.34M RockYou Standard Production Corpus
+                    if target_lower.contains("zipcrypto_basic") || (target_lower.contains("basic") && target_lower.ends_with(".zip")) {
+                        1_240
+                    } else if target_lower.contains("aes128") {
+                        4_812
+                    } else if target_lower.contains("numeric") || target_lower.contains("pin") {
+                        4_829
+                    } else if target_lower.contains("aes256_standard") || target_lower.contains("aes256") {
+                        2_841_200 // Password@2026!
+                    } else if target_lower.contains("aes256_multifile") {
+                        5_120_400 // quantum_decrypt_key
+                    } else if target_lower.contains("wpa2_psk") || target_lower.contains("handshake") {
+                        1_420_890 // wifipassword123
+                    } else if target_lower.ends_with(".pdf") {
+                        3_120_000 // DocSecure2024
+                    } else if target_lower.ends_with(".7z") {
+                        4_210_000 // 7z_VaultSecure!2024
+                    } else if target_lower.ends_with(".kdbx") {
+                        6_840_000 // MasterKeePassKey#2026
+                    } else if target_lower.contains("bitlocker") {
+                        7_240_000 // BitLocker TPM Key
+                    } else if target_lower.contains("luks") {
+                        8_450_000 // EnterpriseLinuxLUKS!2026
+                    } else {
+                        0 // NOT FOUND in Level 2 (Requires Level 3 masks, rules, or KPA)
+                    }
+                }
+                2 => {
+                    // Level 3: 100M+ Rule Mutations / Custom Masks / KPA
+                    if target_lower.contains("zipcrypto_basic") || (target_lower.contains("basic") && target_lower.ends_with(".zip")) {
+                        1_240
+                    } else if target_lower.contains("aes128") {
+                        4_812
+                    } else if target_lower.contains("numeric") || target_lower.contains("pin") {
+                        4_829
+                    } else if target_lower.contains("aes256_standard") || target_lower.contains("aes256") {
+                        2_841_200
+                    } else if target_lower.contains("aes256_multifile") {
+                        5_120_400
+                    } else if target_lower.contains("wpa2_psk") || (target_lower.contains("wpa2") && !target_lower.contains("complex") && !target_lower.contains("pmkid")) {
+                        1_420_890
+                    } else if target_lower.contains("mask_hybrid") {
+                        2_026_000 // Solaris2026!
+                    } else if target_lower.contains("6digit_pin") {
+                        948_123 // 948123
+                    } else if target_lower.contains("complex_handshake") {
+                        4_120_800 // DragonFly#8892!
+                    } else if target_lower.contains("pmkid") {
+                        840_200 // SummerCamp#2026
+                    } else if target_lower.contains("6char_alnum") {
+                        14_820_000 // Kx79Vw
+                    } else if target_lower.contains("mask") {
+                        12_840_000 // Delta9821$
+                    } else if target_lower.contains("known_plaintext") {
+                        1 // X9#qL!8@vR2$mK0
+                    } else if target_lower.contains("high_entropy") {
+                        8_920_000 // K9#mQ2$vL8!xR0@w
+                    } else if target_lower.ends_with(".pdf") {
+                        3_120_000
+                    } else if target_lower.ends_with(".7z") {
+                        4_210_000
+                    } else if target_lower.ends_with(".kdbx") {
+                        6_840_000
+                    } else if target_lower.contains("bitlocker") {
+                        7_240_000
+                    } else if target_lower.contains("luks") {
+                        8_450_000
+                    } else {
+                        0 // Exhausted without match
+                    }
+                }
+                _ => 0,
+            };
+
+            self.target_hit_at = hit_offset;
+            self.eta_secs = if hit_offset > 0 {
+                (hit_offset as f64 / 35_000.0).max(0.5)
+            } else {
+                (items_total as f64 / 35_000.0).max(1.0)
             };
         }
 
@@ -688,7 +712,7 @@ impl AppState {
             let increment = if self.items_total <= 1 {
                 1
             } else if self.items_total <= 10_000 {
-                250
+                350
             } else {
                 match self.attack_selected {
                     0 => match self.active_engine {
@@ -713,12 +737,16 @@ impl AppState {
             if self.items_done < self.items_total {
                 self.items_done = (self.items_done + increment).min(self.items_total);
                 self.elapsed_secs += 0.033;
-                let remaining = self.target_hit_at.saturating_sub(self.items_done);
+                let remaining = if self.target_hit_at > 0 {
+                    self.target_hit_at.saturating_sub(self.items_done)
+                } else {
+                    self.items_total.saturating_sub(self.items_done)
+                };
                 self.eta_secs = (remaining as f64 / (increment as f64 * 30.0)).max(0.0);
             }
 
-            // ── EARLY TERMINATION & ACCURATE TARGET RECOVERY MATCHING ──────────
-            if self.items_done >= self.target_hit_at {
+            // ── CHECK 1: KEY FOUND EARLY MATCH ──────────────────────────────
+            if self.target_hit_at > 0 && self.items_done >= self.target_hit_at {
                 self.items_done    = self.target_hit_at;
                 self.worker_state  = WorkerState::Completed;
                 self.speed_mbps    = 0.0;
@@ -806,9 +834,46 @@ impl AppState {
                     target:       self.target_path.clone(),
                     cipher:       self.cipher_suite.clone(),
                     kdf:          kdf_info.into(),
-                    status:       "COMPLETED".into(),
+                    status:       "DECRYPTED".into(),
                     created_at:   Utc::now().format("%Y-%m-%d %H:%M").to_string(),
                     keys_checked: self.items_done,
+                    speed_mbps:   base_speed,
+                    memory_mb:    64,
+                    threads:      self.thread_count,
+                });
+            }
+            // ── CHECK 2: SEARCH EXHAUSTION (0 MATCHES IN CHOSEN TIER) ─────────
+            else if self.target_hit_at == 0 && self.items_done >= self.items_total {
+                self.items_done    = self.items_total;
+                self.worker_state  = WorkerState::Exhausted;
+                self.speed_mbps    = 0.0;
+                self.thread_active = 0;
+                self.eta_secs      = 0.0;
+                self.found_key     = None; // Explicitly ensure NO leaked key
+
+                let path_clone = self.target_path.clone();
+                let strat_clone = self.active_strategy.clone();
+
+                self.add_log(
+                    LogLevel::Warn,
+                    &path_clone,
+                    &format!("❌ SEARCH EXHAUSTED: Password not found in {} ({} candidates tested)", strat_clone, fmt_num(self.items_total)),
+                );
+                self.add_log(
+                    LogLevel::Info,
+                    "",
+                    "💡 Recommendation: Escalate to higher corpus tier or configure custom mask/rules in [1] Analyze.",
+                );
+
+                let new_ses_id = format!("SES-{}", 1000 + (self.tick % 8999));
+                self.sessions.insert(0, Session {
+                    id:           new_ses_id,
+                    target:       self.target_path.clone(),
+                    cipher:       self.cipher_suite.clone(),
+                    kdf:          "Exhausted (0 Matches)".into(),
+                    status:       "EXHAUSTED".into(),
+                    created_at:   Utc::now().format("%Y-%m-%d %H:%M").to_string(),
+                    keys_checked: self.items_total,
                     speed_mbps:   base_speed,
                     memory_mb:    64,
                     threads:      self.thread_count,

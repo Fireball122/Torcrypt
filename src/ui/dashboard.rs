@@ -51,10 +51,10 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(if app.worker_state == WorkerState::Completed {
-            Style::default().fg(Color::Green)
-        } else {
-            theme::style_border()
+        .border_style(match app.worker_state {
+            WorkerState::Completed => Style::default().fg(Color::Green),
+            WorkerState::Exhausted => Style::default().fg(Color::Yellow),
+            _ => theme::style_border(),
         });
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -79,7 +79,12 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
     } else if app.worker_state == WorkerState::Completed {
         Line::from(vec![
             Span::styled("  Elapsed Time  : ", theme::style_subtext()),
-            Span::styled(format!("{:.1}s (Finished)", app.elapsed_secs), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:.1}s (Key Found)", app.elapsed_secs), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        ])
+    } else if app.worker_state == WorkerState::Exhausted {
+        Line::from(vec![
+            Span::styled("  Elapsed Time  : ", theme::style_subtext()),
+            Span::styled(format!("{:.1}s (Exhausted)", app.elapsed_secs), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         ])
     } else {
         Line::from(vec![
@@ -129,6 +134,11 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
             Span::styled("  ✨ RECOVERED KEY: ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             Span::styled(format!("\"{}\"", key), Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
         ]));
+    } else if app.worker_state == WorkerState::Exhausted {
+        lines.push(Line::from(vec![
+            Span::styled("  Engine Status : ", theme::style_subtext()),
+            Span::styled("❌ SEARCH EXHAUSTED (0 Matches in Selected Tier)", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]));
     } else {
         lines.push(Line::from(vec![
             Span::styled("  Engine Status : ", theme::style_subtext()),
@@ -138,7 +148,8 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
                     WorkerState::Running   => "▶ RUNNING (Active Pipeline)",
                     WorkerState::Paused    => "⏸ PAUSED",
                     WorkerState::Stopped   => "■ STOPPED",
-                    WorkerState::Completed => "✔ COMPLETED",
+                    WorkerState::Completed => "✔ KEY FOUND",
+                    WorkerState::Exhausted => "❌ SEARCH EXHAUSTED",
                 },
                 theme::status_style(match app.worker_state {
                     WorkerState::Idle      => "READY",
@@ -146,6 +157,7 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
                     WorkerState::Paused    => "PAUSED",
                     WorkerState::Stopped   => "FAIL",
                     WorkerState::Completed => "DONE",
+                    WorkerState::Exhausted => "WARN",
                 }),
             ),
         ]));
@@ -167,18 +179,20 @@ fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(if app.worker_state == WorkerState::Completed {
-            Style::default().fg(Color::Green)
-        } else {
-            theme::style_border()
+        .border_style(match app.worker_state {
+            WorkerState::Completed => Style::default().fg(Color::Green),
+            WorkerState::Exhausted => Style::default().fg(Color::Yellow),
+            _ => theme::style_border(),
         });
 
     let label_str = if app.worker_state == WorkerState::Completed {
         if let Some(key) = &app.found_key {
-            format!("100.0%  ─  KEY FOUND: \"{}\"", key)
+            format!("100.0%  ─  KEY RECOVERED: \"{}\"", key)
         } else {
-            "100.0%  ─  COMPLETED (Keyspace Exhausted)".into()
+            "100.0%  ─  COMPLETED".into()
         }
+    } else if app.worker_state == WorkerState::Exhausted {
+        format!("100.0%  ─  EXHAUSTED ({} tested, 0 matches)", fmt_num(app.items_total))
     } else if app.items_total > 1 {
         format!("{:.1}%  ─  {} / {} candidates", pct, fmt_num(app.items_done), fmt_num(app.items_total))
     } else if app.items_total == 1 {
@@ -191,7 +205,13 @@ fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         .block(block)
         .gauge_style(
             Style::default()
-                .fg(if app.worker_state == WorkerState::Completed { Color::Green } else { Color::Cyan })
+                .fg(if app.worker_state == WorkerState::Completed {
+                    Color::Green
+                } else if app.worker_state == WorkerState::Exhausted {
+                    Color::Yellow
+                } else {
+                    Color::Cyan
+                })
                 .bg(Color::Indexed(237))
                 .add_modifier(Modifier::BOLD),
         )
@@ -202,8 +222,6 @@ fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
 }
 
 fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
-    let sat = app.thread_saturation_pct();
-
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
@@ -219,6 +237,8 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 format!("GPU: 100% CUDA (3,072 Cores) │ Host: {} Threads", app.thread_count)
             } else if app.worker_state == WorkerState::Completed {
                 "GPU: COMPLETED │ Workload Finished".into()
+            } else if app.worker_state == WorkerState::Exhausted {
+                "GPU: EXHAUSTED │ Tier Completed".into()
             } else {
                 format!("GPU: IDLE │ Host CPU: 0/{} Cores", app.thread_count)
             }
@@ -228,6 +248,8 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 format!("HYBRID: GPU 100% + {}/{} CPU Cores Active", app.thread_active, app.thread_count)
             } else if app.worker_state == WorkerState::Completed {
                 "HYBRID: COMPLETED │ Workload Finished".into()
+            } else if app.worker_state == WorkerState::Exhausted {
+                "HYBRID: EXHAUSTED │ Tier Completed".into()
             } else {
                 format!("HYBRID: STANDBY │ 0/{} Cores", app.thread_count)
             }
@@ -237,6 +259,8 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 format!("{}/{} CPU Cores (AVX2 SIMD Saturation)", app.thread_active, app.thread_count)
             } else if app.worker_state == WorkerState::Completed {
                 "CPU SIMD: COMPLETED │ Workload Finished".into()
+            } else if app.worker_state == WorkerState::Exhausted {
+                "CPU SIMD: EXHAUSTED │ Tier Completed".into()
             } else {
                 format!("0/{} Cores Active (IDLE)", app.thread_count)
             }
@@ -265,7 +289,7 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 .bg(Color::Indexed(237))
                 .add_modifier(Modifier::BOLD),
         )
-        .percent(if app.worker_state == WorkerState::Running { 100 } else if app.worker_state == WorkerState::Completed { 100 } else { 0 })
+        .percent(if app.worker_state == WorkerState::Running || app.worker_state == WorkerState::Completed || app.worker_state == WorkerState::Exhausted { 100 } else { 0 })
         .label(label_str);
 
     frame.render_widget(gauge, area);
@@ -283,166 +307,147 @@ fn render_cipher_info(frame: &mut Frame, area: Rect, app: &AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let rows_data = [
-        ("Discrete GPU",    app.sys_gpu_name.as_str(), Color::Green),
-        ("GPU Cores",       app.sys_gpu_cores.as_str(), Color::Cyan),
-        ("Host CPU",        app.sys_cpu.as_str(), Color::Yellow),
-        ("Offload Mode",    app.active_engine.display_name(), Color::Magenta),
-        ("SIMD Dispatch",   "AVX2 256-bit Vector Lanes", Color::Green),
-        ("Key Derivation",  "Argon2id · PBKDF2 · SHA-512", Color::White),
+    let rows = vec![
+        Row::new(vec![
+            Cell::from("Target Vault").style(theme::style_subtext()),
+            Cell::from(truncate(&app.target_path, inner.width.saturating_sub(22) as usize)).style(Style::default().fg(Color::Cyan)),
+        ]),
+        Row::new(vec![
+            Cell::from("Active Strategy").style(theme::style_subtext()),
+            Cell::from(truncate(&app.active_strategy, inner.width.saturating_sub(22) as usize)).style(Style::default().fg(Color::Yellow)),
+        ]),
+        Row::new(vec![
+            Cell::from("HW Host").style(theme::style_subtext()),
+            Cell::from(truncate(&format!("{} + {}", app.sys_cpu, app.sys_gpu_name), inner.width.saturating_sub(22) as usize)).style(Style::default().fg(Color::Green)),
+        ]),
+        Row::new(vec![
+            Cell::from("Acceleration").style(theme::style_subtext()),
+            Cell::from("AES-NI: ACTIVE  │  AVX2: ACTIVE  │  CUDA: READY").style(Style::default().fg(Color::Magenta)),
+        ]),
     ];
 
-    let rows: Vec<Row> = rows_data
-        .iter()
-        .map(|(k, v, c)| {
-            Row::new(vec![
-                Cell::from(*k).style(theme::style_subtext()),
-                Cell::from(*v).style(Style::default().fg(*c).add_modifier(Modifier::BOLD)),
-            ])
-        })
-        .collect();
-
-    let widths = [
-        Constraint::Length(16),
-        Constraint::Min(0),
-    ];
-
-    let table = Table::new(rows, widths)
-        .column_spacing(2);
-
+    let widths = [Constraint::Length(16), Constraint::Min(20)];
+    let table = Table::new(rows, widths).column_spacing(1);
     frame.render_widget(table, inner);
 }
 
-// ─── RIGHT COLUMN ─────────────────────────────────────────────────────────────
+// ─── RIGHT COLUMN ────────────────────────────────────────────────────────────
 
 fn render_right(frame: &mut Frame, area: Rect, app: &AppState) {
     let rows = Layout::vertical([
-        Constraint::Length(8),   // Sparkline chart
-        Constraint::Min(0),      // Activity stream (fills rest)
+        Constraint::Length(7), // Real-Time Throughput Sparkline (60s window)
+        Constraint::Min(0),    // Activity Stream (Scrollable, with PageUp/PageDown indicators)
     ])
     .split(area);
 
-    render_sparkline(frame, rows[0], app);
+    render_throughput_sparkline(frame, rows[0], app);
     render_activity_stream(frame, rows[1], app);
 }
 
-fn render_sparkline(frame: &mut Frame, area: Rect, app: &AppState) {
+fn render_throughput_sparkline(frame: &mut Frame, area: Rect, app: &AppState) {
+    let cur_speed = app.throughput_history.back().copied().unwrap_or(0);
+    let avg_speed: u64 = if !app.throughput_history.is_empty() {
+        app.throughput_history.iter().sum::<u64>() / app.throughput_history.len() as u64
+    } else {
+        0
+    };
+    let max_speed = app.throughput_history.iter().copied().max().unwrap_or(0);
+
+    let title_line = Line::from(vec![
+        Span::raw("─ ◈ "),
+        Span::styled("REAL-TIME THROUGHPUT ", theme::style_title()),
+        Span::styled(format!("Cur: {} MB/s │ Avg: {} MB/s │ Peak: {} MB/s (60s) ", cur_speed, avg_speed, max_speed), theme::style_subtext()),
+    ]);
+
+    let block = Block::default()
+        .title(title_line)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme::style_border());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let data: Vec<u64> = app.throughput_history.iter().copied().collect();
+
+    let sparkline = Sparkline::default()
+        .data(&data)
+        .style(Style::default().fg(Color::Cyan))
+        .bar_set(symbols::bar::NINE_LEVELS)
+        .max(25_000);
+
+    frame.render_widget(sparkline, inner);
+}
+
+fn render_activity_stream(frame: &mut Frame, area: Rect, app: &AppState) {
+    let scroll_badge = if app.log_scroll_offset > 0 {
+        format!(" [▲ SCROLLED UP +{} │ J/K/PgUp: Scroll │ G/End: Snap Live] ", app.log_scroll_offset)
+    } else {
+        " [Live Stream 60 FPS] ".into()
+    };
+
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
-            Span::styled("REAL-TIME THROUGHPUT", theme::style_title()),
-            Span::styled("  (Throughput Stream — 60s Window)", theme::style_subtext()),
+            Span::styled("ENGINE ACTIVITY STREAM", theme::style_title()),
+            Span::styled(scroll_badge, if app.log_scroll_offset > 0 { Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD) } else { theme::style_subtext() }),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(theme::style_border());
-
-    let data: Vec<u64> = app.throughput_history.iter().copied().collect();
-
-    let spark = Sparkline::default()
-        .block(block)
-        .data(&data)
-        .max(25_000)
-        .direction(ratatui::widgets::RenderDirection::LeftToRight)
-        .style(Style::default().fg(Color::Cyan))
-        .bar_set(symbols::bar::NINE_LEVELS);
-
-    frame.render_widget(spark, area);
-}
-
-// ─── INTERACTIVE SCROLLABLE ACTIVITY STREAM ──────────────────────────────────
-
-fn render_activity_stream(frame: &mut Frame, area: Rect, app: &AppState) {
-    let scroll_badge = if app.log_scroll_offset > 0 {
-        Line::from(vec![
-            Span::raw("─ ◈ "),
-            Span::styled("ENGINE ACTIVITY STREAM", theme::style_title()),
-            Span::styled(format!("  [▲ ▼ SCROLLED UP +{} │ J/K or PgUp/PgDn │ G: Snap Bottom] ", app.log_scroll_offset), theme::style_amber()),
-        ])
-    } else {
-        Line::from(vec![
-            Span::raw("─ ◈ "),
-            Span::styled("ENGINE ACTIVITY STREAM", theme::style_title()),
-            Span::styled("  [LIVE AUTO-SCROLL │ J/K or PgUp/PgDn to scroll] ", theme::style_subtext()),
-        ])
-    };
-
-    let block = Block::default()
-        .title(scroll_badge)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(if app.log_scroll_offset > 0 {
-            theme::style_amber()
-        } else {
-            theme::style_border()
-        });
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let max_rows = inner.height as usize;
     let total_logs = app.log_ring.len();
 
-    // Calculate window slice based on interactive scroll offset
-    let logs: Vec<_> = if total_logs <= max_rows {
-        app.log_ring.iter().collect()
-    } else {
-        let skip_from_end = app.log_scroll_offset;
-        app.log_ring
-            .iter()
-            .rev()
-            .skip(skip_from_end)
-            .take(max_rows)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect()
-    };
+    let skip_from_tail = app.log_scroll_offset;
+    let end_idx = total_logs.saturating_sub(skip_from_tail);
+    let start_idx = end_idx.saturating_sub(max_rows);
 
-    let col_w = inner.width.saturating_sub(12) as usize;
+    let mut lines: Vec<Line> = Vec::new();
 
-    let rows: Vec<Row> = logs
-        .iter()
-        .map(|entry| {
-            let (badge, badge_style) = match entry.level {
-                LogLevel::Info => ("[INFO]", Style::default().fg(Color::Cyan)),
-                LogLevel::Lock => ("[LOCK]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                LogLevel::Warn => ("[WARN]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                LogLevel::Err  => ("[ERR ]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-            };
+    for entry in app.log_ring.iter().skip(start_idx).take(end_idx - start_idx) {
+        let (lvl_badge, lvl_style) = match entry.level {
+            LogLevel::Info => (" [INFO] ", Style::default().fg(Color::Cyan)),
+            LogLevel::Lock => (" [LOCK] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            LogLevel::Warn => (" [WARN] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            LogLevel::Err  => (" [ERR!] ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        };
 
-            let payload = if entry.path.is_empty() {
-                entry.message.clone()
+        let mut spans = vec![
+            Span::styled(format!("{} ", entry.timestamp), theme::style_dim()),
+            Span::styled(lvl_badge, lvl_style),
+        ];
+
+        if !entry.path.is_empty() {
+            spans.push(Span::styled(
+                format!("{} ", truncate(&entry.path, 22)),
+                Style::default().fg(Color::Magenta),
+            ));
+            spans.push(Span::styled("│ ", theme::style_dim()));
+        }
+
+        spans.push(Span::styled(
+            truncate(&entry.message, inner.width.saturating_sub(38) as usize),
+            if entry.level == LogLevel::Lock {
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            } else if entry.level == LogLevel::Warn {
+                Style::default().fg(Color::Yellow)
             } else {
-                format!("{}  {}", entry.path, entry.message)
-            };
+                Style::default().fg(Color::DarkGray)
+            },
+        ));
 
-            Row::new(vec![
-                Cell::from(entry.timestamp.as_str()).style(theme::style_dim()),
-                Cell::from(badge).style(badge_style),
-                Cell::from(truncate(&payload, col_w)).style(Style::default().fg(Color::White)),
-            ])
-        })
-        .collect();
+        lines.push(Line::from(spans));
+    }
 
-    let widths = [
-        Constraint::Length(9),   // timestamp
-        Constraint::Length(7),   // badge
-        Constraint::Min(0),      // payload
-    ];
-
-    let table = Table::new(rows, widths)
-        .column_spacing(1)
-        .header(
-            Row::new(vec!["Time", "Level", "Path / Event Payload"])
-                .style(Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
-        );
-
-    frame.render_widget(table, inner);
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Formatting Helpers ──────────────────────────────────────────────────────
 
 fn fmt_num(n: u64) -> String {
     let s = n.to_string();
@@ -456,10 +461,10 @@ fn fmt_num(n: u64) -> String {
 
 fn fmt_duration(secs: f64) -> String {
     let s = secs as u64;
-    if s >= 3600 {
-        format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+    if s < 60 {
+        format!("{:.1}s", secs)
     } else {
-        format!("{:02}:{:02}", s / 60, s % 60)
+        format!("{}m {:02}s", s / 60, s % 60)
     }
 }
 
