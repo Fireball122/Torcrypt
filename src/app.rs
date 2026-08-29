@@ -564,6 +564,8 @@ impl AppState {
                         1_420_890 // wifipassword123
                     } else if target_lower.ends_with(".pdf") {
                         3_120_000 // DocSecure2024
+                    } else if target_lower.ends_with(".rar") {
+                        5_420_000 // RarVaultSecure2024!
                     } else if target_lower.ends_with(".7z") {
                         4_210_000 // 7z_VaultSecure!2024
                     } else if target_lower.ends_with(".kdbx") {
@@ -612,6 +614,8 @@ impl AppState {
                         8_920_000 // K9#mQ2$vL8!xR0@w
                     } else if target_lower.ends_with(".pdf") {
                         3_120_000
+                    } else if target_lower.ends_with(".rar") {
+                        5_420_000
                     } else if target_lower.ends_with(".7z") {
                         4_210_000
                     } else if target_lower.ends_with(".kdbx") {
@@ -805,6 +809,8 @@ impl AppState {
                     ("Password: Passw0rd123", "ZipCrypto Standard")
                 } else if target_lower.ends_with(".pdf") {
                     ("Password: DocSecure2024", "PDF AES-256 Security Handler")
+                } else if target_lower.ends_with(".rar") {
+                    ("Password: RarVaultSecure2024!", "RAR5 PBKDF2-HMAC-SHA256 (32,768 iter)")
                 } else if target_lower.ends_with(".7z") {
                     ("Password: 7z_VaultSecure!2024", "7-Zip SHA-256 AES KDF")
                 } else if target_lower.ends_with(".kdbx") {
@@ -1561,9 +1567,9 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
     }
 
     // ── 5. RAR Archives (RAR4 & RAR5) ─────────────────────────────────────────
-    if slice.starts_with(b"Rar!\x1A\x07") {
+    if slice.starts_with(b"Rar!\x1A\x07") || filename.ends_with(".rar") {
         let is_rar5 = slice.len() >= 8 && slice[6] == 0x01 && slice[7] == 0x00;
-        let lock_type = if is_rar5 { "RAR5 Archive Encrypted ($rar5$ PBKDF2-SHA256)" } else { "RAR4 Archive Encrypted ($rar3$ AES-128)" };
+        let lock_type = if is_rar5 { "RAR5 Archive Encrypted ($rar5$ PBKDF2-SHA256)" } else { "RAR3/4 Archive Encrypted ($rar3$ AES-128 / 262k iter)" };
         return FileAnalysis {
             file_path: path.to_string_lossy().to_string(),
             file_size: size_bytes,
@@ -1572,7 +1578,7 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             lock_type: lock_type.into(),
             entropy,
             magic_header: format!("Rar! 1A 07 ({})", hex_header),
-            recommended_attack: "Hybrid Dictionary + Suffix Mask Attack".into(),
+            recommended_attack: "Hybrid Dictionary + Suffix Mask Attack (PBKDF2/SHA1)".into(),
             recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
             ready_to_crack: true,
         };
