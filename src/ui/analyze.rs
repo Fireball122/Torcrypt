@@ -1,4 +1,4 @@
-// ui/analyze.rs — [Tab 1] Interactive File Selector & Smart Decryption Analyzer with Hardware Acceleration Routing
+// ui/analyze.rs — [Tab 1] Interactive File Selector & Smart Decryption Analyzer with Leveled Wordlist Attack Profiles
 use crate::app::{AppState, ComputeEngine};
 use crate::ui::theme;
 use ratatui::{
@@ -238,7 +238,7 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
-            Span::styled("SMART DECRYPTION STRATEGY & HARDWARE LAUNCHER", theme::style_title()),
+            Span::styled("PASSWORD LIST TIERS & DECRYPTION LAUNCHER", theme::style_title()),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -282,23 +282,34 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         return;
     }
 
-    // Encrypted target detected — show strategy selector and launch button
-    let strat_names = [
-        ("1. Standard Wordlist + Rules", "rockyou.txt + GPU Best64 Permutation Rules (Max Speed)"),
-        ("2. Mask / Brute-Force Matrix", "Full incremental hardware charset stepping (?u?l?l?d?d?d)"),
-        ("3. Contextual Metadata Attack", "Targeted pre-attack using host/user/service tokens"),
+    // Leveled attack tiers: Level 1 (Common 1M), Level 2 (Standard 14.3M), Level 3 (Advanced 124.5M)
+    let tiers = [
+        (
+            "Level 1: High-Frequency Common (1,000,000 Passwords)",
+            "Top 100k + Top Wi-Fi defaults + Router OEM wordlists + 4-8 digit numeric PINs  (~1-3s)",
+        ),
+        (
+            "Level 2: Standard Production Corpus (14,344,392 Candidates)",
+            "RockYou full corpus + Best64 permutation mutation rules (General real-world use)  (~30s)",
+        ),
+        (
+            "Level 3: Advanced Hardened Multi-Corpus (124,500,000 Keyspace)",
+            "Multi-corpus (CrackStation + SecLists) + Markov n-grams + Deep hybrid leet rules  (~2-3m)",
+        ),
     ];
 
     let mut strat_lines: Vec<Line> = vec![
         Line::from(vec![
-            Span::styled("  Select Attack Strategy  ", theme::style_subtext()),
+            Span::styled("  Select Password List Profile  ", theme::style_subtext()),
             Span::styled("[Tab]", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(" to cycle:", theme::style_subtext()),
+            Span::styled(" to cycle  │  ", theme::style_subtext()),
+            Span::styled("[1-3]", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(" direct jump:", theme::style_subtext()),
         ]),
         Line::from(vec![Span::raw("")]),
     ];
 
-    for (i, (title, desc)) in strat_names.iter().enumerate() {
+    for (i, (title, desc)) in tiers.iter().enumerate() {
         let is_active = i == app.attack_selected;
         let pill = if is_active {
             Span::styled(format!(" ▶ [{}] ", title), Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
@@ -326,12 +337,19 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
 
+    let tier_label = match app.attack_selected {
+        0 => "LEVEL 1 (1M COMMON)",
+        1 => "LEVEL 2 (14.3M STANDARD)",
+        2 => "LEVEL 3 (124.5M ADVANCED)",
+        _ => "LEVEL 2",
+    };
+
     let launch_p = Paragraph::new(Line::from(vec![
         Span::styled(" 🚀 PRESS ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::styled(" [A] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::styled(" OR ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::styled(" [SPACE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::styled(" TO ENGAGE GPU/CPU ACCELERATED PIPELINE ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" TO LAUNCH {} DECRYPTION PIPELINE ", tier_label), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
     ]))
     .alignment(ratatui::layout::Alignment::Center)
     .block(launch_block);

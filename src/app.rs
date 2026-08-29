@@ -1,4 +1,4 @@
-// app.rs — TORCRYPT AppState: Routing, File Explorer & Smart Decryption Analyzer, Ring-Buffer Telemetry, Dynamic GPU/CPU Hardware Probing, Task Completion Lifecycle
+// app.rs — TORCRYPT AppState: Routing, File Explorer & Smart Decryption Analyzer, Ring-Buffer Telemetry, Dynamic GPU/CPU Hardware Probing, Leveled Password Corpus Tiers
 use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::Read;
@@ -114,7 +114,6 @@ pub struct FileAnalysis {
     pub recommended_attack: String,
     pub recommended_engine: ComputeEngine,
     pub ready_to_crack:     bool,
-    pub attack_profile_idx: usize, // 0: Wordlist, 1: Mask, 2: Contextual
 }
 
 impl Default for FileAnalysis {
@@ -130,7 +129,6 @@ impl Default for FileAnalysis {
             recommended_attack: "Select a file to inspect".into(),
             recommended_engine: ComputeEngine::GpuPrimary,
             ready_to_crack:     false,
-            attack_profile_idx: 0,
         }
     }
 }
@@ -180,13 +178,14 @@ pub struct AppState {
     pub dir_entries:        Vec<FileEntry>,
     pub file_selected_idx:  usize,
     pub analysis:           FileAnalysis,
-    pub attack_selected:    usize, // 0: Wordlist+Rules, 1: Mask/Bruteforce, 2: Contextual
+    pub attack_selected:    usize, // 0: Level 1 (Common 1M), 1: Level 2 (Standard 14.3M), 2: Level 3 (Advanced 124.5M)
 
     // Worker & Dynamic Acceleration
     pub worker_state:       WorkerState,
     pub cipher_suite:       String,
     pub target_path:        String,
     pub active_engine:      ComputeEngine,
+    pub active_strategy:    String,
     pub items_done:         u64,
     pub items_total:        u64,
     pub elapsed_secs:       f64,
@@ -256,13 +255,14 @@ impl Default for AppState {
             dir_entries:        Vec::new(),
             file_selected_idx:  0,
             analysis:           FileAnalysis::default(),
-            attack_selected:    0,
+            attack_selected:    1, // Level 2 (Standard Production Corpus) by default
 
             // Clean IDLE / STANDBY startup state
             worker_state:       WorkerState::Idle,
             cipher_suite:       "—".into(),
             target_path:        "No active target (Select in [1] Analyze)".into(),
             active_engine:      if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
+            active_strategy:    "Level 2: Standard Production Corpus (14,344,392 Candidates)".into(),
             items_done:         0,
             items_total:        0,
             elapsed_secs:       0.0,
@@ -457,7 +457,6 @@ impl AppState {
                 recommended_attack: "Press [Enter] or [← / Backspace] to go back".into(),
                 recommended_engine: ComputeEngine::CpuSimd,
                 ready_to_crack:     false,
-                attack_profile_idx: 0,
             };
             return;
         }
@@ -474,7 +473,6 @@ impl AppState {
                 recommended_attack: "Press [Enter] to enter directory".into(),
                 recommended_engine: ComputeEngine::CpuSimd,
                 ready_to_crack:     false,
-                attack_profile_idx: 0,
             };
             return;
         }
@@ -482,7 +480,7 @@ impl AppState {
         self.analysis = analyze_file_magic(&entry.path, entry.size_bytes, self.sys_gpu_available);
     }
 
-    // ── Launch Attack from Tab 1 (Auto-Enforces GPU / Hybrid Routing) ─────────
+    // ── Launch Attack from Tab 1 (Leveled Attack Selection) ───────────────────
 
     pub fn launch_attack_from_analysis(&mut self) {
         if !self.analysis.ready_to_crack {
@@ -494,23 +492,26 @@ impl AppState {
         self.active_engine = self.analysis.recommended_engine.clone();
         self.worker_state  = WorkerState::Running;
         self.items_done    = 0;
-        self.items_total   = 14_344_392; // Standard dictionary size (e.g. RockYou)
         self.elapsed_secs  = 0.0;
-        self.eta_secs      = 35.0;
         self.thread_active = self.thread_count;
         self.found_key     = None;
+
+        // Configure candidate volume and ETA based on user-selected tier
+        let (attack_name, items_total, eta_default) = match self.attack_selected {
+            0 => ("Level 1: High-Frequency Common (1,000,000 Top Passwords)", 1_000_000, 3.5),
+            1 => ("Level 2: Standard Production Corpus (14,344,392 RockYou + Best64)", 14_344_392, 35.0),
+            2 => ("Level 3: Advanced Hardened Multi-Corpus (124,500,000 Markov + Deep Rules)", 124_500_000, 180.0),
+            _ => ("Level 2: Standard Production Corpus (14,344,392 Candidates)", 14_344_392, 35.0),
+        };
+
+        self.items_total     = items_total;
+        self.eta_secs        = eta_default;
+        self.active_strategy = attack_name.to_string();
 
         self.speed_mbps = match self.active_engine {
             ComputeEngine::GpuPrimary => 18_450.0,
             ComputeEngine::Hybrid     => 4_850.0,
             ComputeEngine::CpuSimd    => 428.5,
-        };
-
-        let attack_name = match self.attack_selected {
-            0 => "Dictionary + Best64 Rules",
-            1 => "Mask / Brute-Force Matrix (?u?l?l?d?d)",
-            2 => "Contextual Metadata Attack (SSID/Host/Tokens)",
-            _ => "Standard Wordlist Attack",
         };
 
         let path_clone = self.target_path.clone();
@@ -520,7 +521,7 @@ impl AppState {
         self.add_log(
             LogLevel::Lock,
             &path_clone,
-            &format!("Target Loaded: {} │ Strategy: {}", cipher_clone, attack_name),
+            &format!("Target Loaded: {} │ Tier: {}", cipher_clone, attack_name),
         );
         self.add_log(
             LogLevel::Info,
@@ -593,10 +594,24 @@ impl AppState {
             let jitter = (self.tick % 7) as f64 * 12.5 - 35.0;
             self.speed_mbps = (base_speed + jitter).max(100.0);
 
-            let increment = match self.active_engine {
-                ComputeEngine::GpuPrimary => 18_500,
-                ComputeEngine::Hybrid     => 4_800,
-                ComputeEngine::CpuSimd    => 450,
+            // Increment rate proportional to workload tier
+            let increment = match self.attack_selected {
+                0 => match self.active_engine {
+                    ComputeEngine::GpuPrimary => 12_500,
+                    ComputeEngine::Hybrid     => 3_200,
+                    ComputeEngine::CpuSimd    => 350,
+                },
+                1 => match self.active_engine {
+                    ComputeEngine::GpuPrimary => 18_500,
+                    ComputeEngine::Hybrid     => 4_800,
+                    ComputeEngine::CpuSimd    => 450,
+                },
+                2 => match self.active_engine {
+                    ComputeEngine::GpuPrimary => 45_000,
+                    ComputeEngine::Hybrid     => 12_000,
+                    ComputeEngine::CpuSimd    => 1_200,
+                },
+                _ => 18_500,
             };
 
             if self.items_done < self.items_total {
@@ -695,6 +710,16 @@ impl AppState {
         }
 
         match c {
+            '1' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack => {
+                self.attack_selected = 0;
+            }
+            '2' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack => {
+                self.attack_selected = 1;
+            }
+            '3' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack => {
+                self.attack_selected = 2;
+            }
+
             '1' => self.current_tab = Tab::Analyze,
             '2' => self.current_tab = Tab::Dashboard,
             '3' => self.current_tab = Tab::Benchmark,
@@ -942,7 +967,6 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
                 recommended_attack: "Check file permissions".into(),
                 recommended_engine: ComputeEngine::CpuSimd,
                 ready_to_crack: false,
-                attack_profile_idx: 0,
             };
         }
     };
@@ -973,10 +997,9 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             lock_type: "WPA2/WPA3-PSK (PBKDF2-SHA1, 4096 iter, 32-byte PMK)".into(),
             entropy,
             magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else if is_hccapx { "HCPX (Hashcat Format)".into() } else { format!("D4 C3 B2 A1 ({})", hex_header) },
-            recommended_attack: "Dictionary + GPU Rules (WPA 4-Way Handshake / PMKID)".into(),
+            recommended_attack: "Leveled Wordlist + GPU Rules (WPA 4-Way Handshake / PMKID)".into(),
             recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
             ready_to_crack: true,
-            attack_profile_idx: 0,
         };
     }
 
@@ -1005,13 +1028,12 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             entropy,
             magic_header: format!("PK 03 04 ({})", hex_header),
             recommended_attack: if is_encrypted {
-                "Standard Wordlist + Hashcat Rules (rockyou.txt)"
+                "Leveled Wordlist + Hashcat Rules (rockyou.txt)"
             } else {
                 "No decryption required (archive is unencrypted)"
             }.into(),
             recommended_engine: if gpu_available && is_encrypted { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
             ready_to_crack: is_encrypted,
-            attack_profile_idx: 0,
         };
     }
 
@@ -1033,7 +1055,6 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             }.into(),
             recommended_engine: if gpu_available && is_encrypted { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
             ready_to_crack: is_encrypted,
-            attack_profile_idx: 1,
         };
     }
 
@@ -1052,7 +1073,6 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             recommended_attack: "Hybrid Dictionary + Suffix Mask Attack".into(),
             recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
             ready_to_crack: true,
-            attack_profile_idx: 0,
         };
     }
 
@@ -1069,7 +1089,6 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             recommended_attack: "Multi-Threaded Vectorized SIMD + CUDA Brute-Force".into(),
             recommended_engine: if gpu_available { ComputeEngine::Hybrid } else { ComputeEngine::CpuSimd },
             ready_to_crack: true,
-            attack_profile_idx: 0,
         };
     }
 
@@ -1086,6 +1105,5 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
         recommended_attack: "Use as Dictionary / Wordlist source".into(),
         recommended_engine: ComputeEngine::CpuSimd,
         ready_to_crack: false,
-        attack_profile_idx: 0,
     }
 }
