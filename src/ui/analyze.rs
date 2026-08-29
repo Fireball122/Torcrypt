@@ -32,7 +32,6 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
     ])
     .split(area);
 
-    // 1. Current Path Banner with Back hint
     let cur_path_str = app.current_dir.to_string_lossy();
     let path_block = Block::default()
         .title(Line::from(vec![
@@ -53,7 +52,6 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
 
     frame.render_widget(path_p, rows[0]);
 
-    // 2. Directory Listing Table
     let table_block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
@@ -174,9 +172,11 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
     let entropy_pct = ((a.entropy / 8.0) * 100.0).clamp(0.0, 100.0) as u16;
 
     let engine_badge = match a.recommended_engine {
-        ComputeEngine::GpuPrimary => (format!("🚀 {}", app.sys_gpu_name), Color::Green),
-        ComputeEngine::Hybrid     => (format!("⚡ HYBRID ({} + {})", app.sys_cpu, app.sys_gpu_name), Color::Cyan),
-        ComputeEngine::CpuSimd    => (format!("⚙ {}", app.sys_cpu), Color::Yellow),
+        ComputeEngine::GpuPrimary  => (format!("🚀 {}", app.sys_gpu_name), Color::Green),
+        ComputeEngine::Hybrid      => (format!("⚡ HYBRID ({} + {})", app.sys_cpu, app.sys_gpu_name), Color::Cyan),
+        ComputeEngine::CpuSimd     => (format!("⚙ {}", app.sys_cpu), Color::Yellow),
+        ComputeEngine::TlsKeylog   => ("🔑 TLS 1.3 KEYLOG STREAM DECRYPTOR".into(), Color::Green),
+        ComputeEngine::PcapInspect => ("📡 PCAP PROTOCOL CREDENTIAL EXTRACTOR".into(), Color::Cyan),
     };
 
     let lines = vec![
@@ -252,11 +252,11 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let a = &app.analysis;
 
-    if !a.is_encrypted {
+    if !a.ready_to_crack {
         let p = Paragraph::new(vec![
             Line::from(vec![Span::raw("")]),
             Line::from(vec![
-                Span::styled("  ◈ Navigation & Hardware Instructions:", theme::style_subtext()),
+                Span::styled("  ◈ Navigation & Instructions:", theme::style_subtext()),
             ]),
             Line::from(vec![
                 Span::styled("    • Navigate with ", theme::style_subtext()),

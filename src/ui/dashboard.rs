@@ -61,8 +61,10 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let speed = app.speed_mbps;
 
-    let items_label = if app.items_total > 0 {
+    let items_label = if app.items_total > 1 {
         format!("{} / {} candidates", fmt_num(app.items_done), fmt_num(app.items_total))
+    } else if app.items_total == 1 {
+        "1 / 1 Stream Session".into()
     } else {
         "—".into()
     };
@@ -87,9 +89,11 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
     };
 
     let engine_color = match app.active_engine {
-        ComputeEngine::GpuPrimary => Color::Green,
-        ComputeEngine::Hybrid     => Color::Cyan,
-        ComputeEngine::CpuSimd    => Color::Yellow,
+        ComputeEngine::GpuPrimary  => Color::Green,
+        ComputeEngine::Hybrid      => Color::Cyan,
+        ComputeEngine::CpuSimd     => Color::Yellow,
+        ComputeEngine::TlsKeylog   => Color::Green,
+        ComputeEngine::PcapInspect => Color::Cyan,
     };
 
     let mut lines = vec![
@@ -175,8 +179,10 @@ fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         } else {
             "100.0%  ─  COMPLETED (Keyspace Exhausted)".into()
         }
-    } else if app.items_total > 0 {
+    } else if app.items_total > 1 {
         format!("{:.1}%  ─  {} / {} candidates", pct, fmt_num(app.items_done), fmt_num(app.items_total))
+    } else if app.items_total == 1 {
+        "100.0%  ─  STREAM PROCESSING".into()
     } else {
         "0.0%  ─  STANDBY".into()
     };
@@ -233,6 +239,20 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 "CPU SIMD: COMPLETED │ Workload Finished".into()
             } else {
                 format!("0/{} Cores Active (IDLE)", app.thread_count)
+            }
+        }
+        ComputeEngine::TlsKeylog => {
+            if app.worker_state == WorkerState::Running {
+                "TLS DECRYPTOR: Active SSLKEYLOG Session Stream".into()
+            } else {
+                "TLS DECRYPTOR: Stream Decrypted".into()
+            }
+        }
+        ComputeEngine::PcapInspect => {
+            if app.worker_state == WorkerState::Running {
+                "PCAP INSPECTOR: Scanning Plaintext Protocol Frames".into()
+            } else {
+                "PCAP INSPECTOR: Extraction Completed".into()
             }
         }
     };
