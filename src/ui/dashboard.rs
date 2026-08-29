@@ -29,7 +29,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, app: &AppState) {
 
 fn render_left(frame: &mut Frame, area: Rect, app: &AppState) {
     let rows = Layout::vertical([
-        Constraint::Length(12),  // Live Worker Card (with GPU accelerator row)
+        Constraint::Length(12),  // Live Worker Card (with Recovered Key display)
         Constraint::Length(5),   // Progress Gauge
         Constraint::Length(5),   // Compute Saturation (GPU + CPU Threads)
         Constraint::Min(0),      // Cipher Info & Hardware Acceleration Matrix
@@ -51,7 +51,11 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme::style_border());
+        .border_style(if app.worker_state == WorkerState::Completed {
+            Style::default().fg(Color::Green)
+        } else {
+            theme::style_border()
+        });
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -70,6 +74,11 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
             Span::styled(" elapsed │ ETA ", theme::style_subtext()),
             Span::styled(fmt_duration(app.eta_secs), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         ])
+    } else if app.worker_state == WorkerState::Completed {
+        Line::from(vec![
+            Span::styled("  Elapsed Time  : ", theme::style_subtext()),
+            Span::styled(format!("{:.1}s (Finished)", app.elapsed_secs), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        ])
     } else {
         Line::from(vec![
             Span::styled("  Elapsed / ETA : ", theme::style_subtext()),
@@ -83,7 +92,7 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         ComputeEngine::CpuSimd    => Color::Yellow,
     };
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled("  Cipher Target : ", theme::style_subtext()),
             Span::styled(app.cipher_suite.clone(), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
@@ -109,7 +118,15 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
             ),
         ]),
         elapsed_label,
-        Line::from(vec![
+    ];
+
+    if let Some(key) = &app.found_key {
+        lines.push(Line::from(vec![
+            Span::styled("  ✨ RECOVERED KEY: ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("\"{}\"", key), Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
             Span::styled("  Engine Status : ", theme::style_subtext()),
             Span::styled(
                 match app.worker_state {
@@ -127,8 +144,8 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
                     WorkerState::Completed => "DONE",
                 }),
             ),
-        ]),
-    ];
+        ]));
+    }
 
     frame.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false }),
@@ -146,9 +163,19 @@ fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme::style_border());
+        .border_style(if app.worker_state == WorkerState::Completed {
+            Style::default().fg(Color::Green)
+        } else {
+            theme::style_border()
+        });
 
-    let label_str = if app.items_total > 0 {
+    let label_str = if app.worker_state == WorkerState::Completed {
+        if let Some(key) = &app.found_key {
+            format!("100.0%  ─  KEY FOUND: \"{}\"", key)
+        } else {
+            "100.0%  ─  COMPLETED (Keyspace Exhausted)".into()
+        }
+    } else if app.items_total > 0 {
         format!("{:.1}%  ─  {} / {} candidates", pct, fmt_num(app.items_done), fmt_num(app.items_total))
     } else {
         "0.0%  ─  STANDBY".into()
@@ -158,7 +185,7 @@ fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         .block(block)
         .gauge_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(if app.worker_state == WorkerState::Completed { Color::Green } else { Color::Cyan })
                 .bg(Color::Indexed(237))
                 .add_modifier(Modifier::BOLD),
         )
@@ -184,6 +211,8 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         ComputeEngine::GpuPrimary => {
             if app.worker_state == WorkerState::Running {
                 format!("GPU: 100% CUDA (3,072 Cores) │ Host: {} Threads", app.thread_count)
+            } else if app.worker_state == WorkerState::Completed {
+                "GPU: COMPLETED │ Workload Finished".into()
             } else {
                 format!("GPU: IDLE │ Host CPU: 0/{} Cores", app.thread_count)
             }
@@ -191,6 +220,8 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         ComputeEngine::Hybrid => {
             if app.worker_state == WorkerState::Running {
                 format!("HYBRID: GPU 100% + {}/{} CPU Cores Active", app.thread_active, app.thread_count)
+            } else if app.worker_state == WorkerState::Completed {
+                "HYBRID: COMPLETED │ Workload Finished".into()
             } else {
                 format!("HYBRID: STANDBY │ 0/{} Cores", app.thread_count)
             }
@@ -198,6 +229,8 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         ComputeEngine::CpuSimd => {
             if app.worker_state == WorkerState::Running {
                 format!("{}/{} CPU Cores (AVX2 SIMD Saturation)", app.thread_active, app.thread_count)
+            } else if app.worker_state == WorkerState::Completed {
+                "CPU SIMD: COMPLETED │ Workload Finished".into()
             } else {
                 format!("0/{} Cores Active (IDLE)", app.thread_count)
             }
@@ -212,7 +245,7 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 .bg(Color::Indexed(237))
                 .add_modifier(Modifier::BOLD),
         )
-        .percent(if app.worker_state == WorkerState::Running { 100 } else { 0 })
+        .percent(if app.worker_state == WorkerState::Running { 100 } else if app.worker_state == WorkerState::Completed { 100 } else { 0 })
         .label(label_str);
 
     frame.render_widget(gauge, area);
