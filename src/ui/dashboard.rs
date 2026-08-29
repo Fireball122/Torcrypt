@@ -1,6 +1,6 @@
 // ui/dashboard.rs — 40/60 Responsive 2-Column Grid: Worker Card + Progress |
 //                   Sparkline Throughput + Auto-Scrolling Activity Stream
-use crate::app::{AppState, LogLevel, WorkerState};
+use crate::app::{AppState, ComputeEngine, LogLevel, WorkerState};
 use crate::ui::theme;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -16,8 +16,8 @@ use ratatui::{
 
 pub fn render_dashboard(frame: &mut Frame, area: Rect, app: &AppState) {
     let cols = Layout::horizontal([
-        Constraint::Percentage(40),
-        Constraint::Percentage(60),
+        Constraint::Percentage(42),
+        Constraint::Percentage(58),
     ])
     .split(area);
 
@@ -29,10 +29,10 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, app: &AppState) {
 
 fn render_left(frame: &mut Frame, area: Rect, app: &AppState) {
     let rows = Layout::vertical([
-        Constraint::Length(10),   // Live Worker Card
-        Constraint::Length(5),    // Progress Gauge
-        Constraint::Length(5),    // Thread Pool Saturation
-        Constraint::Min(0),       // Cipher Info / extra
+        Constraint::Length(12),  // Live Worker Card (with GPU accelerator row)
+        Constraint::Length(5),   // Progress Gauge
+        Constraint::Length(5),   // Compute Saturation (GPU + CPU Threads)
+        Constraint::Min(0),      // Cipher Info & Hardware Acceleration Matrix
     ])
     .split(area);
 
@@ -58,7 +58,7 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
     let speed = app.speed_mbps;
 
     let items_label = if app.items_total > 0 {
-        format!("{} / {} files", fmt_num(app.items_done), fmt_num(app.items_total))
+        format!("{} / {} candidates", fmt_num(app.items_done), fmt_num(app.items_total))
     } else {
         "—".into()
     };
@@ -77,11 +77,16 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         ])
     };
 
+    let engine_color = match app.active_engine {
+        ComputeEngine::GpuPrimary => Color::Green,
+        ComputeEngine::Hybrid     => Color::Cyan,
+        ComputeEngine::CpuSimd    => Color::Yellow,
+    };
+
     let lines = vec![
         Line::from(vec![
-            Span::styled("  Cipher Suite  : ", theme::style_subtext()),
-            Span::styled(app.cipher_suite.clone(),
-                Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled("  Cipher Target : ", theme::style_subtext()),
+            Span::styled(app.cipher_suite.clone(), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![
             Span::styled("  Target Vault  : ", theme::style_subtext()),
@@ -89,13 +94,17 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
                 Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
-            Span::styled("  Items Done    : ", theme::style_subtext()),
+            Span::styled("  Compute Engine: ", theme::style_subtext()),
+            Span::styled(app.active_engine.display_name(), Style::default().fg(engine_color).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Candidates Done: ", theme::style_subtext()),
             Span::styled(items_label, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![
             Span::styled("  Throughput    : ", theme::style_subtext()),
             Span::styled(
-                format!("{:.1} MB/s", speed),
+                if speed >= 1000.0 { format!("{:.1} MH/s (Accelerated)", speed / 1.0) } else { format!("{:.1} MB/s", speed) },
                 if speed > 0.0 { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() },
             ),
         ]),
@@ -104,8 +113,8 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
             Span::styled("  Engine Status : ", theme::style_subtext()),
             Span::styled(
                 match app.worker_state {
-                    WorkerState::Idle      => "● STANDBY (Awaiting Job)",
-                    WorkerState::Running   => "▶ RUNNING",
+                    WorkerState::Idle      => "● STANDBY (Awaiting Job in Tab 1)",
+                    WorkerState::Running   => "▶ RUNNING (Active Pipeline)",
                     WorkerState::Paused    => "⏸ PAUSED",
                     WorkerState::Stopped   => "■ STOPPED",
                     WorkerState::Completed => "✔ COMPLETED",
@@ -133,14 +142,14 @@ fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
-            Span::styled("ENCRYPTION PIPELINE", theme::style_title()),
+            Span::styled("DECRYPTION PIPELINE PROGRESS", theme::style_title()),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(theme::style_border());
 
     let label_str = if app.items_total > 0 {
-        format!("{:.1}%  ─  {} / {} files", pct, fmt_num(app.items_done), fmt_num(app.items_total))
+        format!("{:.1}%  ─  {} / {} candidates", pct, fmt_num(app.items_done), fmt_num(app.items_total))
     } else {
         "0.0%  ─  STANDBY".into()
     };
@@ -165,16 +174,34 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
-            Span::styled("THREAD POOL SATURATION", theme::style_title()),
+            Span::styled("HARDWARE COMPUTE SATURATION", theme::style_title()),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Magenta));
 
-    let label_str = if app.thread_active > 0 {
-        format!("{}/{} Cores Active  ({sat}% Saturation)", app.thread_active, app.thread_count)
-    } else {
-        format!("0/{} Cores Active (IDLE)", app.thread_count)
+    let label_str = match app.active_engine {
+        ComputeEngine::GpuPrimary => {
+            if app.worker_state == WorkerState::Running {
+                format!("GPU: 100% CUDA (3,072 Cores) │ Host: {} Threads", app.thread_count)
+            } else {
+                format!("GPU: IDLE │ Host CPU: 0/{} Cores", app.thread_count)
+            }
+        }
+        ComputeEngine::Hybrid => {
+            if app.worker_state == WorkerState::Running {
+                format!("HYBRID: GPU 100% + {}/{} CPU Cores Active", app.thread_active, app.thread_count)
+            } else {
+                format!("HYBRID: STANDBY │ 0/{} Cores", app.thread_count)
+            }
+        }
+        ComputeEngine::CpuSimd => {
+            if app.worker_state == WorkerState::Running {
+                format!("{}/{} CPU Cores (AVX2 SIMD Saturation)", app.thread_active, app.thread_count)
+            } else {
+                format!("0/{} Cores Active (IDLE)", app.thread_count)
+            }
+        }
     };
 
     let gauge = Gauge::default()
@@ -185,7 +212,7 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 .bg(Color::Indexed(237))
                 .add_modifier(Modifier::BOLD),
         )
-        .percent(sat as u16)
+        .percent(if app.worker_state == WorkerState::Running { 100 } else { 0 })
         .label(label_str);
 
     frame.render_widget(gauge, area);
@@ -195,7 +222,7 @@ fn render_cipher_info(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
-            Span::styled("CRYPTOGRAPHIC PIPELINE", theme::style_title()),
+            Span::styled("HARDWARE ACCELERATION SPECIFICATIONS", theme::style_title()),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -204,12 +231,12 @@ fn render_cipher_info(frame: &mut Frame, area: Rect, app: &AppState) {
     frame.render_widget(block, area);
 
     let rows_data = [
-        ("Algorithm",  app.cipher_suite.as_str(), Color::Magenta),
-        ("Key Length",  "256-bit AES-GCM",        Color::Cyan),
-        ("IV / Nonce",  "96-bit (GCM Standard)",  Color::White),
-        ("Auth Tag",    "128-bit GHASH",           Color::Green),
-        ("KDF",         "Argon2id (64 MB Cost)",   Color::Yellow),
-        ("AES-NI",      "ENABLED ✔",               Color::Green),
+        ("Discrete GPU",    app.sys_gpu_name.as_str(), Color::Green),
+        ("GPU Cores",       app.sys_gpu_cores.as_str(), Color::Cyan),
+        ("Host CPU",        app.sys_cpu.as_str(), Color::Yellow),
+        ("Offload Mode",    app.active_engine.display_name(), Color::Magenta),
+        ("SIMD Dispatch",   "AVX2 256-bit Vector Lanes", Color::Green),
+        ("Key Derivation",  "Argon2id · PBKDF2 · SHA-512", Color::White),
     ];
 
     let rows: Vec<Row> = rows_data
@@ -223,7 +250,7 @@ fn render_cipher_info(frame: &mut Frame, area: Rect, app: &AppState) {
         .collect();
 
     let widths = [
-        Constraint::Length(14),
+        Constraint::Length(16),
         Constraint::Min(0),
     ];
 
@@ -251,7 +278,7 @@ fn render_sparkline(frame: &mut Frame, area: Rect, app: &AppState) {
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
             Span::styled("REAL-TIME THROUGHPUT", theme::style_title()),
-            Span::styled("  (MB/s — 60s window)", theme::style_subtext()),
+            Span::styled("  (Throughput Stream — 60s Window)", theme::style_subtext()),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -262,7 +289,7 @@ fn render_sparkline(frame: &mut Frame, area: Rect, app: &AppState) {
     let spark = Sparkline::default()
         .block(block)
         .data(&data)
-        .max(600)
+        .max(25_000)
         .direction(ratatui::widgets::RenderDirection::LeftToRight)
         .style(Style::default().fg(Color::Cyan))
         .bar_set(symbols::bar::NINE_LEVELS);

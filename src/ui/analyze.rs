@@ -1,5 +1,5 @@
-// ui/analyze.rs — [Tab 1] Interactive File Selector & Smart Decryption Analyzer
-use crate::app::AppState;
+// ui/analyze.rs — [Tab 1] Interactive File Selector & Smart Decryption Analyzer with Hardware Acceleration Routing
+use crate::app::{AppState, ComputeEngine};
 use crate::ui::theme;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -173,6 +173,12 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let entropy_pct = ((a.entropy / 8.0) * 100.0).clamp(0.0, 100.0) as u16;
 
+    let engine_badge = match a.recommended_engine {
+        ComputeEngine::GpuPrimary => (format!("🚀 {}", app.sys_gpu_name), Color::Green),
+        ComputeEngine::Hybrid     => (format!("⚡ HYBRID ({} + {})", app.sys_cpu, app.sys_gpu_name), Color::Cyan),
+        ComputeEngine::CpuSimd    => (format!("⚙ {}", app.sys_cpu), Color::Yellow),
+    };
+
     let lines = vec![
         Line::from(vec![
             Span::styled("  Target Path   : ", theme::style_subtext()),
@@ -199,12 +205,16 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
                 if a.is_encrypted { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() }),
         ]),
         Line::from(vec![
+            Span::styled("  Auto-Router   : ", theme::style_subtext()),
+            Span::styled(engine_badge.0, Style::default().fg(engine_badge.1).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
             Span::styled(format!("  Entropy: {:.2} / 8.00 bits ({}% Randomness) ", a.entropy, entropy_pct), theme::style_subtext()),
         ]),
     ];
 
     let content_layout = Layout::vertical([
-        Constraint::Length(6), // Metadata lines
+        Constraint::Length(7), // Metadata lines
         Constraint::Length(1), // Entropy Gauge Bar
         Constraint::Min(0),
     ])
@@ -228,7 +238,7 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
-            Span::styled("SMART DECRYPTION STRATEGY & LAUNCHER", theme::style_title()),
+            Span::styled("SMART DECRYPTION STRATEGY & HARDWARE LAUNCHER", theme::style_title()),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -246,7 +256,7 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         let p = Paragraph::new(vec![
             Line::from(vec![Span::raw("")]),
             Line::from(vec![
-                Span::styled("  ◈ Navigation & Instructions:", theme::style_subtext()),
+                Span::styled("  ◈ Navigation & Hardware Instructions:", theme::style_subtext()),
             ]),
             Line::from(vec![
                 Span::styled("    • Navigate with ", theme::style_subtext()),
@@ -263,6 +273,10 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
             Line::from(vec![
                 Span::styled("    • Select an encrypted file (ZIP, PCAP, PDF, RAR, AES vault) to analyze.", theme::style_subtext()),
             ]),
+            Line::from(vec![
+                Span::styled("    • Detected acceleration hardware: ", theme::style_subtext()),
+                Span::styled(format!("{} + {}", app.sys_cpu, app.sys_gpu_name), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            ]),
         ]);
         frame.render_widget(p, inner);
         return;
@@ -270,8 +284,8 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
 
     // Encrypted target detected — show strategy selector and launch button
     let strat_names = [
-        ("1. Standard Wordlist + Rules", "rockyou.txt + Best64 permutation rules (Recommended)"),
-        ("2. Mask / Brute-Force Matrix", "Full incremental charset stepping (?u?l?l?d?d?d)"),
+        ("1. Standard Wordlist + Rules", "rockyou.txt + GPU Best64 Permutation Rules (Max Speed)"),
+        ("2. Mask / Brute-Force Matrix", "Full incremental hardware charset stepping (?u?l?l?d?d?d)"),
         ("3. Contextual Metadata Attack", "Targeted pre-attack using host/user/service tokens"),
     ];
 
@@ -317,7 +331,7 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         Span::styled(" [A] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::styled(" OR ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::styled(" [SPACE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::styled(" TO LAUNCH DECRYPTION RECOVERY PIPELINE ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(" TO ENGAGE GPU/CPU ACCELERATED PIPELINE ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
     ]))
     .alignment(ratatui::layout::Alignment::Center)
     .block(launch_block);
