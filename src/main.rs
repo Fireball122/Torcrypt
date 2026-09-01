@@ -121,7 +121,8 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                             app.navigate_up_directory();
                         }
                         KeyCode::Tab if app.current_tab == Tab::Analyze => {
-                            app.attack_selected = (app.attack_selected + 1) % 3;
+                            let opt_count = app.attack_options.len().max(1);
+                            app.attack_selected = (app.attack_selected + 1) % opt_count;
                         }
                         KeyCode::Up => {
                             if app.current_tab == Tab::Analyze && app.file_selected_idx > 0 {

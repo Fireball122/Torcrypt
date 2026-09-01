@@ -282,44 +282,47 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         return;
     }
 
-    // Leveled attack tiers: Level 1 (10k), Level 2 (14.34M RockYou), Level 3 (100M+ Advanced Rules/Masks)
-    let tiers = [
-        (
-            "Level 1: High-Frequency Common (10,000 Passwords)",
-            "Top 10,000 Passwords + Common Wi-Fi defaults + 4-digit PINs (Instant check)  (~0.1s - 1s)",
-        ),
-        (
-            "Level 2: Standard Production Corpus (14,344,392 Candidates)",
-            "RockYou full corpus + Best64 permutation mutation rules (General real-world use)  (~5-15s)",
-        ),
-        (
-            "Level 3: Advanced Hardened Multi-Corpus (100,000,000+ Keyspace)",
-            "Multi-corpus + Markov n-grams + Hybrid rule mutations + Custom masks + KPA  (~30-60s)",
-        ),
-    ];
-
     let mut strat_lines: Vec<Line> = vec![
         Line::from(vec![
-            Span::styled("  Select Password List Profile  ", theme::style_subtext()),
+            Span::styled("  Select Attack Strategy / Tool Profile  ", theme::style_subtext()),
             Span::styled("[Tab]", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::styled(" to cycle  │  ", theme::style_subtext()),
-            Span::styled("[1-3]", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("[1-6]", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::styled(" direct jump:", theme::style_subtext()),
         ]),
         Line::from(vec![Span::raw("")]),
     ];
 
-    for (i, (title, desc)) in tiers.iter().enumerate() {
+    for (i, opt) in app.attack_options.iter().enumerate() {
         let is_active = i == app.attack_selected;
         let pill = if is_active {
-            Span::styled(format!(" ▶ [{}] ", title), Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
+            Span::styled(format!(" ▶ [{}] ", i + 1), Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
         } else {
-            Span::styled(format!("   [{}] ", title), Style::default().fg(Color::DarkGray).bg(Color::Indexed(237)))
+            Span::styled(format!("   [{}] ", i + 1), Style::default().fg(Color::DarkGray).bg(Color::Indexed(237)))
+        };
+        let rec_badge = if opt.is_auto_recommended {
+            Span::styled(" ⚡(AUTO-RECOMMENDED)", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        } else {
+            Span::raw("")
+        };
+        let title_style = if is_active {
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let desc_style = if is_active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            theme::style_dim()
         };
 
         strat_lines.push(Line::from(vec![
             pill,
-            Span::styled(format!("  {}", desc), if is_active { Style::default().fg(Color::White) } else { theme::style_dim() }),
+            Span::styled(format!(" {}", opt.title), title_style),
+            rec_badge,
+        ]));
+        strat_lines.push(Line::from(vec![
+            Span::styled(format!("      ↳ Keyspace: {} │ {}", opt.keyspace_name, opt.desc), desc_style),
         ]));
         strat_lines.push(Line::from(vec![Span::raw("")]));
     }
@@ -337,11 +340,10 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
 
-    let tier_label = match app.attack_selected {
-        0 => "LEVEL 1 (10K COMMON)",
-        1 => "LEVEL 2 (14.3M STANDARD)",
-        2 => "LEVEL 3 (100M+ ADVANCED)",
-        _ => "LEVEL 2",
+    let active_label = if !app.attack_options.is_empty() && app.attack_selected < app.attack_options.len() {
+        app.attack_options[app.attack_selected].title.clone()
+    } else {
+        "SELECTED STRATEGY".into()
     };
 
     let launch_p = Paragraph::new(Line::from(vec![
@@ -349,14 +351,13 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         Span::styled(" [A] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::styled(" OR ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::styled(" [SPACE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::styled(format!(" TO LAUNCH {} DECRYPTION PIPELINE ", tier_label), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" TO LAUNCH {} PIPELINE ", active_label), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
     ]))
     .alignment(ratatui::layout::Alignment::Center)
     .block(launch_block);
 
     frame.render_widget(launch_p, sub_sections[1]);
 }
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn truncate(s: &str, max: usize) -> String {

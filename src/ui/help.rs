@@ -63,7 +63,7 @@ pub fn render_help_modal(frame: &mut Frame, area: Rect, _app: &AppState) {
             ("[J / K] or [↑ / ↓]", "Navigate file explorer & select target file"),
             ("[Enter]",            "Open directory or launch decryption recovery"),
             ("[A / Space]",        "Launch multi-threaded recovery attack pipeline"),
-            ("[Tab]",              "Cycle attack profile (Wordlist / Mask / Contextual)"),
+            ("[Tab] / [1-6]",      "Select strategy (Auto / 10-Digit Mask / RockYou / Rules / Stream)"),
             ("[H / Backspace]",    "Navigate up to parent directory [..]"),
         ],
     );

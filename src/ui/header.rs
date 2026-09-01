@@ -21,7 +21,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
     // ── Left: App Title Badge ──────────────────────────────────────────────────
     let title_line = Line::from(vec![
         Span::styled(" ◈ TORCRYPT ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::styled(" v0.1.16 ", Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)),
+        Span::styled(" v0.1.20 ", Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)),
     ]);
     let title = Paragraph::new(title_line).alignment(Alignment::Left);
     frame.render_widget(title, cols[0]);
