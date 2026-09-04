@@ -3,9 +3,17 @@ use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Instant;
 use chrono::Utc;
+use crate::engine::audit_export::export_audit_report;
+use crate::engine::extractors::{
+    HashClassification, KeePassInspection, PdfInspection, SevenZipInspection, ZipEncryption, ZipInspection,
+};
+use crate::engine::session_db::{DbSession, SessionDatabase};
+use crate::engine::system_info::SystemMonitor;
+use crate::engine::feasibility::estimate_feasibility;
+use crate::engine::wordlist_profiler::WordlistProfile;
+use crate::engine::{benchmark_stage, run_full_benchmark, BenchResult, PotfileRecord};
 
 // ─── Tab Routing (5 Tabs) ─────────────────────────────────────────────────────
 
@@ -41,51 +49,10 @@ impl Tab {
     }
 }
 
-// ─── Worker / Session State ───────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkerState {
-    Idle,
-    Running,
-    Paused,
-    Stopped,
-    Completed, // ✨ Key Found / Decrypted
-    Exhausted, // ❌ Search Exhausted (0 Matches in Tier)
-}
-
-// ─── Compute Target Engine Mode ───────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ComputeEngine {
-    GpuPrimary, // 95% GPU CUDA / OpenCL + 5% CPU Rule Streaming
-    Hybrid,     // 50% GPU + 50% CPU SIMD (Optimal for Argon2/Scrypt/LUKS)
-    CpuSimd,    // Multi-threaded CPU AVX2/AVX-512 vectorization (Fallback)
-    TlsKeylog,  // TLS 1.3 Ephemeral Master Key Decryption
-    PcapInspect,// Plaintext Protocol Credential Stream Extractor
-}
-
-impl ComputeEngine {
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            ComputeEngine::GpuPrimary => "GPU ACCELERATED (CUDA / OpenCL Primary)",
-            ComputeEngine::Hybrid     => "HYBRID PIPELINE (GPU 50% + CPU 50%)",
-            ComputeEngine::CpuSimd    => "CPU VECTORIZED (AVX2 / AVX-512 SIMD)",
-            ComputeEngine::TlsKeylog  => "TLS 1.3 STREAM DECRYPTOR (SSLKEYLOGFILE)",
-            ComputeEngine::PcapInspect=> "PCAP PROTOCOL CREDENTIAL EXTRACTOR",
-        }
-    }
-}
-
-// ─── Log Entries (Structured, Ring-Buffered) ──────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LogLevel {
-    Info,
-    Lock,
-    Warn,
-    Err,
-}
-
+// ─── Re-Exported Decoupled Engine Protocol ────────────────────────────────────
+pub use crate::engine::{
+    AttackRequest, ComputeEngine, EngineCommand, EngineHandle, LogLevel, TelemetryEvent, WorkerState,
+};
 #[derive(Debug, Clone)]
 pub struct LogEntry {
     pub timestamp: String,
@@ -149,6 +116,7 @@ pub struct AttackOption {
     pub speed_base: f64,
     pub is_auto_recommended: bool,
     pub engine_override: Option<ComputeEngine>,
+    pub feasibility:     String,
 }
 
 // ─── Session Registry ─────────────────────────────────────────────────────────
@@ -169,14 +137,6 @@ pub struct Session {
 
 // ─── Benchmark Results ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
-pub struct BenchResult {
-    pub name:          String,
-    pub single_mb:     u64,
-    pub multi_mb:      u64,
-    pub latency_us:    f64,
-    pub hw_accel:      bool,
-}
 
 // ─── AppState ────────────────────────────────────────────────────────────────
 
@@ -198,8 +158,9 @@ pub struct AppState {
     pub analysis:           FileAnalysis,
     pub attack_options:     Vec<AttackOption>,
     pub attack_selected:    usize,
-
-    // Worker & Early-Abort Match Engine
+    pub custom_wordlist:    Option<PathBuf>,
+    pub mask_modal_open:    bool,
+    pub mask_input:         String,
     pub worker_state:       WorkerState,
     pub cipher_suite:       String,
     pub target_path:        String,
@@ -214,6 +175,9 @@ pub struct AppState {
     pub thread_count:       u8,
     pub thread_active:      u8,
     pub found_key:          Option<String>,
+    pub engine:             EngineHandle,
+    pub session_db:         Option<SessionDatabase>,
+    pub sys_monitor:        SystemMonitor,
 
     // Telemetry & Interactive Log Scrolling
     pub throughput_history: VecDeque<u64>,      // 60 samples
@@ -223,6 +187,9 @@ pub struct AppState {
     // Sessions
     pub sessions:           Vec<Session>,
     pub sessions_selected:  usize,
+    pub potfile_view:       bool,
+    pub potfile_records:    Vec<PotfileRecord>,
+    pub potfile_selected:   usize,
     pub search_mode:        bool,
     pub search_query:       String,
 
@@ -259,8 +226,40 @@ impl Default for AppState {
         let initial_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/home/ultaria"));
         let now = Instant::now();
 
-        let (cpu_name, thread_count) = probe_cpu_info();
-        let (gpu_name, gpu_cores, gpu_vram, gpu_available) = probe_gpu_info();
+        let hw = SystemMonitor::probe_hardware();
+        let cpu_name = hw.cpu_name;
+        let thread_count = hw.cpu_cores;
+        let gpu_name = hw.gpu_name;
+        let gpu_cores = hw.gpu_details;
+        let gpu_vram = hw.gpu_vram;
+        let gpu_available = hw.gpu_available;
+        let aes_ni = hw.aes_ni;
+        let avx2 = hw.avx2;
+        let rdrand = hw.rdrand;
+        let vaes512 = hw.vaes512;
+
+        let mut sys_monitor = SystemMonitor::new();
+        let cpu_usage_pct = sys_monitor.sample_cpu();
+        let (ram_used_gb, ram_total_gb) = SystemMonitor::sample_memory();
+
+        let session_db = SessionDatabase::init().ok();
+        let mut initial_sessions = Vec::new();
+        if let Some(db) = &session_db {
+            for s in db.load_all() {
+                initial_sessions.push(Session {
+                    id:           s.id,
+                    target:       s.target,
+                    cipher:       s.cipher,
+                    kdf:          s.kdf,
+                    status:       s.status,
+                    created_at:   s.created_at,
+                    keys_checked: s.keys_checked,
+                    speed_mbps:   s.speed_mbps,
+                    memory_mb:    s.memory_mb,
+                    threads:      s.threads,
+                });
+            }
+        }
 
         let mut state = Self {
             in_splash:          true,
@@ -274,6 +273,9 @@ impl Default for AppState {
             current_dir:        initial_dir,
             dir_entries:        Vec::new(),
             file_selected_idx:  0,
+            custom_wordlist:    None,
+            mask_modal_open:    false,
+            mask_input:         "?u?l?l?l?d?d".into(),
             analysis:           FileAnalysis::default(),
             attack_options:     Vec::new(),
             attack_selected:    0,
@@ -293,69 +295,41 @@ impl Default for AppState {
             thread_count,
             thread_active:      0,
             found_key:          None,
+            engine:             EngineHandle::new(),
+            session_db,
+            sys_monitor,
 
             throughput_history: VecDeque::with_capacity(60),
             log_ring:           VecDeque::with_capacity(200),
             log_scroll_offset:  0,
-
-            sessions: vec![
-                Session {
-                    id:           "SES-9821".into(),
-                    target:       "wpa2_psk_handshake.pcap".into(),
-                    cipher:       "WPA2-PSK (PBKDF2-SHA1)".into(),
-                    kdf:          "SSID: SecureOfficeWiFi".into(),
-                    status:       "DECRYPTED".into(),
-                    created_at:   "2026-08-27 22:42".into(),
-                    keys_checked: 1_420_890,
-                    speed_mbps:   520_000.0,
-                    memory_mb:    64,
-                    threads:      thread_count,
-                },
-                Session {
-                    id:           "SES-9819".into(),
-                    target:       "tls_encrypted_session.pcap".into(),
-                    cipher:       "TLS 1.3 (AES-GCM-256)".into(),
-                    kdf:          "sslkeylog.log".into(),
-                    status:       "DECRYPTED".into(),
-                    created_at:   "2026-08-27 20:11".into(),
-                    keys_checked: 1,
-                    speed_mbps:   24_500.0,
-                    memory_mb:    32,
-                    threads:      1,
-                },
-            ],
+            sessions:           initial_sessions,
             sessions_selected:  0,
             search_mode:        false,
+            potfile_view:       false,
+            potfile_records:    Vec::new(),
+            potfile_selected:   0,
             search_query:       String::new(),
 
-            bench_results: vec![
-                BenchResult { name: "WPA2-PSK (PBKDF2-SHA1)".into(),    single_mb: 45,   multi_mb: if gpu_available { 520 } else { 18 },       latency_us: 1.92, hw_accel: true  },
-                BenchResult { name: "TLS 1.3 (AES-GCM-256 Stream)".into(), single_mb: 850, multi_mb: if gpu_available { 24_500 } else { 1850 }, latency_us: 0.05, hw_accel: true  },
-                BenchResult { name: "WinZip AES-256".into(),            single_mb: 320,  multi_mb: if gpu_available { 12_500 } else { 150 },  latency_us: 0.35, hw_accel: true  },
-                BenchResult { name: "WinZip AES-128".into(),            single_mb: 410,  multi_mb: if gpu_available { 15_800 } else { 210 },  latency_us: 0.28, hw_accel: true  },
-                BenchResult { name: "ZipCrypto Legacy".into(),          single_mb: 680,  multi_mb: if gpu_available { 28_000 } else { 850 },  latency_us: 0.04, hw_accel: true  },
-            ],
+            bench_results:      run_full_benchmark(hw.cpu_cores as u8),
             bench_selected:     0,
             bench_running:      false,
             bench_progress:     0,
-
-            sys_os:             std::env::consts::OS.to_string(),
-            sys_kernel:         "Native Hardware Abstraction Layer".into(),
-            sys_arch:           std::env::consts::ARCH.to_string(),
+            sys_os:             hw.os_name,
+            sys_kernel:         hw.kernel_ver,
+            sys_arch:           hw.arch_name,
             sys_cpu:            cpu_name,
             sys_gpu_name:       gpu_name.clone(),
             sys_gpu_cores:      gpu_cores,
             sys_gpu_vram:       gpu_vram,
             sys_gpu_available:  gpu_available,
             sys_rustc:          "rustc 1.98+ (Optimized Release)".into(),
-            cpu_usage_pct:      12,
-            ram_used_gb:        4.2,
-            ram_total_gb:       32.0,
-            aes_ni:             true,
-            avx2:               true,
-            rdrand:             true,
-            vaes512:            false,
-
+            cpu_usage_pct,
+            ram_used_gb,
+            ram_total_gb,
+            aes_ni,
+            avx2,
+            rdrand,
+            vaes512,
             tick:               0,
         };
 
@@ -383,6 +357,28 @@ impl AppState {
         if let Some(parent) = self.current_dir.parent().map(|p| p.to_path_buf()) {
             self.current_dir = parent;
             self.refresh_directory();
+        }
+    }
+
+    pub fn filtered_potfile(&self) -> Vec<&PotfileRecord> {
+        let q = self.search_query.trim().to_lowercase();
+        if q.is_empty() {
+            self.potfile_records.iter().collect()
+        } else {
+            self.potfile_records
+                .iter()
+                .filter(|r| {
+                    r.hash_or_sig.to_lowercase().contains(&q)
+                        || r.plaintext.to_lowercase().contains(&q)
+                        || r.algo.to_lowercase().contains(&q)
+                })
+                .collect()
+        }
+    }
+
+    pub fn refresh_potfile(&mut self) {
+        if let Some(db) = &self.session_db {
+            self.potfile_records = db.load_potfile();
         }
     }
 
@@ -496,6 +492,15 @@ impl AppState {
             return;
         }
         self.analysis = analyze_file_magic(&entry.path, entry.size_bytes, self.sys_gpu_available);
+
+        // Potfile / Historical Session Cache lookup
+        if let Some(db) = &self.session_db {
+            if let Some(cached_pwd) = db.potfile_lookup(&self.analysis.file_path) {
+                self.analysis.recommended_attack = format!("✨ [POTFILE CACHED] Password: {}", cached_pwd);
+            } else if let Some(cached) = self.sessions.iter().find(|s| s.target == self.analysis.file_path && s.status == "DECRYPTED") {
+                self.analysis.recommended_attack = format!("✨ [POTFILE CACHED] Solved in session {} ({})", cached.id, cached.created_at);
+            }
+        }
         self.attack_options = generate_attack_options(&self.analysis, self.sys_gpu_available);
         self.attack_selected = 0; // Pre-select Auto-Recommended strategy
     }
@@ -508,152 +513,283 @@ impl AppState {
         let sel_idx = self.attack_selected.min(self.attack_options.len().saturating_sub(1));
         let opt = self.attack_options[sel_idx].clone();
 
-        // 1. ALWAYS reset target state to None at the start (Zero State Leakage)
-        self.target_path   = self.analysis.file_path.clone();
-        self.cipher_suite  = self.analysis.lock_type.clone();
-        self.active_engine = opt.engine_override.unwrap_or_else(|| self.analysis.recommended_engine.clone());
-        self.worker_state  = WorkerState::Running;
-        self.items_done    = 0;
-        self.elapsed_secs  = 0.0;
-        self.found_key     = None;
+        let active_engine = opt.engine_override.unwrap_or(self.analysis.recommended_engine);
+
+        let req = AttackRequest {
+            target_path:     self.analysis.file_path.clone(),
+            cipher_suite:    self.analysis.lock_type.clone(),
+            active_engine,
+            strategy_id:     opt.id.clone(),
+            strategy_title:  opt.title.clone(),
+            keyspace_name:   opt.keyspace_name.clone(),
+            items_total:     opt.items_total,
+            speed_base:      opt.speed_base,
+            thread_count:    self.thread_count,
+            wordlist_path:   self.custom_wordlist.as_ref().map(|p| p.to_string_lossy().to_string()),
+            start_offset:    0,
+        };
+
+        self.target_path       = req.target_path.clone();
+        self.cipher_suite      = req.cipher_suite.clone();
+        self.active_engine     = active_engine;
+        self.worker_state      = WorkerState::Running;
+        self.items_done        = 0;
+        self.elapsed_secs      = 0.0;
+        self.found_key         = None;
         self.log_scroll_offset = 0;
+        self.items_total       = opt.items_total;
+        self.active_strategy   = opt.title.clone();
+        self.thread_active     = self.thread_count;
+        self.speed_mbps        = opt.speed_base;
+        self.target_hit_at     = 0;
 
-        self.items_total     = opt.items_total;
-        self.active_strategy = opt.title.clone();
-        self.thread_active   = self.thread_count;
-        self.speed_mbps      = opt.speed_base;
-
-        let target_lower = self.target_path.to_lowercase();
-        let hit_offset: u64 = if opt.items_total == 1 {
-            1
-        } else if opt.id == "mask_10d" {
-            // 10-digit mask hit resolution: captures numeric PIN targets
-            if target_lower.contains("numeric_pin") || target_lower.contains("4digit") {
-                4_829
-            } else if target_lower.contains("5digit") {
-                83_921
-            } else if target_lower.contains("6digit") {
-                948_123
-            } else if target_lower.contains("10digit") || target_lower.contains("pin") {
-                2_481_920_419
-            } else {
-                0 // Cleanly exhausts across the 10B space if password is not numeric
-            }
-        } else if opt.items_total <= 10_000 {
-            if target_lower.contains("zipcrypto_basic") || (target_lower.contains("basic") && target_lower.ends_with(".zip")) {
-                1_240
-            } else if target_lower.contains("aes128") && !target_lower.contains("mask") && !target_lower.contains("6char") {
-                4_812
-            } else if target_lower.contains("numeric_pin") || target_lower.contains("4digit") || (target_lower.contains("pin") && !target_lower.contains("5digit") && !target_lower.contains("6digit")) {
-                4_829
-            } else {
-                0
-            }
-        } else if opt.items_total <= 15_000_000 {
-            if target_lower.contains("zipcrypto_basic") || (target_lower.contains("basic") && target_lower.ends_with(".zip")) {
-                1_240
-            } else if target_lower.contains("aes128") && !target_lower.contains("mask") && !target_lower.contains("6char") {
-                4_812
-            } else if target_lower.contains("numeric_pin") || target_lower.contains("4digit") || (target_lower.contains("pin") && !target_lower.contains("5digit") && !target_lower.contains("6digit")) {
-                4_829
-            } else if target_lower.contains("5digit") {
-                83_921
-            } else if target_lower.contains("aes256_standard") || (target_lower.contains("aes256") && !target_lower.contains("multifile") && !target_lower.contains("mask") && !target_lower.contains("high_entropy")) {
-                2_841_200
-            } else if target_lower.contains("aes256_multifile") {
-                5_120_400
-            } else if (target_lower.contains("wpa2_psk") || target_lower.contains("handshake")) && !target_lower.contains("complex") {
-                1_420_890
-            } else if target_lower.ends_with(".pdf") {
-                3_120_000
-            } else if target_lower.ends_with(".rar") {
-                5_420_000
-            } else if target_lower.ends_with(".7z") {
-                4_210_000
-            } else if target_lower.ends_with(".kdbx") {
-                6_840_000
-            } else if target_lower.contains("bitlocker") {
-                7_240_000
-            } else if target_lower.contains("luks") {
-                8_450_000
-            } else if opt.id == "auto" && (target_lower.contains("digest") || target_lower.contains("http") || target_lower.contains("ftp") || target_lower.contains("tls")) {
-                1
-            } else {
-                0
-            }
-        } else {
-            // Advanced 100M+ / Rules
-            if target_lower.contains("zipcrypto_basic") || (target_lower.contains("basic") && target_lower.ends_with(".zip")) {
-                1_240
-            } else if target_lower.contains("aes128") && !target_lower.contains("mask") && !target_lower.contains("6char") {
-                4_812
-            } else if target_lower.contains("numeric_pin") || target_lower.contains("4digit") || (target_lower.contains("pin") && !target_lower.contains("5digit") && !target_lower.contains("6digit")) {
-                4_829
-            } else if target_lower.contains("5digit") {
-                83_921
-            } else if target_lower.contains("6digit_pin") || target_lower.contains("6digit") {
-                948_123
-            } else if target_lower.contains("aes256_standard") || (target_lower.contains("aes256") && !target_lower.contains("multifile") && !target_lower.contains("mask") && !target_lower.contains("high_entropy")) {
-                2_841_200
-            } else if target_lower.contains("aes256_multifile") {
-                5_120_400
-            } else if target_lower.contains("wpa2_psk") || (target_lower.contains("wpa2") && !target_lower.contains("complex")) {
-                1_420_890
-            } else if target_lower.contains("complex_ssid") {
-                3_840_000
-            } else if target_lower.contains("complex_handshake") {
-                4_120_800
-            } else if target_lower.contains("pmkid") {
-                840_200
-            } else if target_lower.contains("mask_hybrid") {
-                2_026_000
-            } else if target_lower.contains("6char_alnum") {
-                14_820_000
-            } else if target_lower.contains("mask") {
-                12_840_000
-            } else if target_lower.contains("known_plaintext") {
-                1
-            } else if target_lower.contains("high_entropy") {
-                8_920_000
-            } else if target_lower.ends_with(".pdf") {
-                3_120_000
-            } else if target_lower.ends_with(".rar") {
-                5_420_000
-            } else if target_lower.ends_with(".7z") {
-                4_210_000
-            } else if target_lower.ends_with(".kdbx") {
-                6_840_000
-            } else if target_lower.contains("bitlocker") {
-                7_240_000
-            } else if target_lower.contains("luks") {
-                8_450_000
-            } else {
-                0
-            }
-        };
-
-        self.target_hit_at = hit_offset;
-        self.eta_secs = if hit_offset > 0 {
-            (hit_offset as f64 / 45_000.0).max(0.5)
-        } else {
-            (self.items_total as f64 / 45_000.0).max(1.0)
-        };
-
-        let path_clone = self.target_path.clone();
-        let cipher_clone = self.cipher_suite.clone();
-        let strategy_clone = self.active_strategy.clone();
-        let engine_str = self.active_engine.display_name();
-        self.add_log(
-            LogLevel::Lock,
-            &path_clone,
-            &format!("Target Loaded: {} │ Profile: {}", cipher_clone, strategy_clone),
-        );
-        self.add_log(
-            LogLevel::Info,
-            "",
-            &format!("Compute Engine Engaged: {} │ Keyspace: {}", engine_str, opt.keyspace_name),
-        );
+        self.engine.send(EngineCommand::StartAttack(req));
         self.current_tab = Tab::Dashboard;
+    }
+    pub fn launch_custom_mask_attack(&mut self) {
+        if !self.analysis.ready_to_crack {
+            return;
+        }
+        let mask = crate::engine::crackers::generator::CompiledMask::parse(&self.mask_input);
+        let active_engine = self.analysis.recommended_engine;
+
+        let req = AttackRequest {
+            target_path:     self.analysis.file_path.clone(),
+            cipher_suite:    self.analysis.lock_type.clone(),
+            active_engine,
+            strategy_id:     format!("mask_pattern:{}", self.mask_input),
+            strategy_title:  format!("Custom Mask ({})", self.mask_input),
+            keyspace_name:   format!("{} Candidates", fmt_num(mask.total)),
+            items_total:     mask.total,
+            speed_base:      if self.sys_gpu_available { 40_000.0 } else { 4_000.0 },
+            thread_count:    self.thread_count,
+            wordlist_path:   None,
+            start_offset:    0,
+        };
+
+        self.target_path       = req.target_path.clone();
+        self.cipher_suite      = req.cipher_suite.clone();
+        self.active_engine     = active_engine;
+        self.worker_state      = WorkerState::Running;
+        self.items_done        = 0;
+        self.elapsed_secs      = 0.0;
+        self.found_key         = None;
+        self.log_scroll_offset = 0;
+        self.items_total       = mask.total;
+        self.active_strategy   = req.strategy_title.clone();
+        self.thread_active     = self.thread_count;
+        self.speed_mbps        = req.speed_base;
+        self.target_hit_at     = 0;
+
+        self.engine.send(EngineCommand::StartAttack(req));
+        self.current_tab = Tab::Dashboard;
+    }
+
+    pub fn resume_attack_from_checkpoint(&mut self) {
+        if !self.analysis.ready_to_crack {
+            return;
+        }
+        let checkpoint = self.session_db.as_ref().and_then(|db| db.get_latest_checkpoint(&self.analysis.file_path));
+        let (session_id, offset) = match checkpoint {
+            Some((s, o)) => (s, o),
+            None => {
+                self.add_log(LogLevel::Warn, "", "No checkpoint found for target — starting fresh attack");
+                self.launch_attack_from_analysis();
+                return;
+            }
+        };
+
+        let active_engine = self.analysis.recommended_engine;
+        let total = self.attack_options.first().map(|o| o.items_total).unwrap_or(10_000).max(offset + 10_000);
+
+        let req = AttackRequest {
+            target_path:     self.analysis.file_path.clone(),
+            cipher_suite:    self.analysis.lock_type.clone(),
+            active_engine,
+            strategy_id:     "auto_resume".into(),
+            strategy_title:  format!("Resumed Session ({})", session_id),
+            keyspace_name:   "Resumed Candidates".into(),
+            items_total:     total,
+            speed_base:      if self.sys_gpu_available { 40_000.0 } else { 4_000.0 },
+            thread_count:    self.thread_count,
+            wordlist_path:   self.custom_wordlist.as_ref().map(|p| p.to_string_lossy().to_string()),
+            start_offset:    offset,
+        };
+
+        self.target_path       = req.target_path.clone();
+        self.cipher_suite      = req.cipher_suite.clone();
+        self.active_engine     = active_engine;
+        self.worker_state      = WorkerState::Running;
+        self.items_done        = offset;
+        self.elapsed_secs      = 0.0;
+        self.found_key         = None;
+        self.log_scroll_offset = 0;
+        self.items_total       = total;
+        self.active_strategy   = req.strategy_title.clone();
+        self.thread_active     = self.thread_count;
+        self.speed_mbps        = req.speed_base;
+        self.target_hit_at     = 0;
+
+        self.add_log(LogLevel::Lock, "", &format!("Resuming Attack from Checkpoint: candidate #{} ({})", fmt_num(offset), session_id));
+        self.engine.send(EngineCommand::StartAttack(req));
+        self.current_tab = Tab::Dashboard;
+    }
+
+    pub fn handle_telemetry(&mut self, event: TelemetryEvent) {
+        match event {
+            TelemetryEvent::Log { level, path, message } => {
+                self.add_log(level, &path, &message);
+            }
+            TelemetryEvent::Started {
+                target_path,
+                cipher_suite,
+                active_strategy,
+                active_engine,
+                items_total,
+                speed_mbps,
+                thread_count,
+                eta_secs,
+            } => {
+                self.target_path     = target_path;
+                self.cipher_suite    = cipher_suite;
+                self.active_strategy = active_strategy;
+                self.active_engine   = active_engine;
+                self.items_total     = items_total;
+                self.items_done      = 0;
+                self.speed_mbps      = speed_mbps;
+                self.thread_count    = thread_count;
+                self.thread_active   = thread_count;
+                self.eta_secs        = eta_secs;
+                self.worker_state    = WorkerState::Running;
+                self.found_key       = None;
+            }
+            TelemetryEvent::ProgressUpdate {
+                items_done,
+                items_total,
+                speed_mbps,
+                elapsed_secs,
+                eta_secs,
+                thread_active,
+                throughput_mb,
+            } => {
+                self.items_done    = items_done;
+                self.items_total   = items_total;
+                self.speed_mbps    = speed_mbps;
+                self.elapsed_secs  = elapsed_secs;
+                self.eta_secs      = eta_secs;
+                self.thread_active = thread_active;
+                if throughput_mb > 0 || self.worker_state == WorkerState::Running {
+                    self.push_throughput(throughput_mb);
+                }
+            }
+            TelemetryEvent::KeyFound {
+                cracked_key,
+                kdf_info,
+                items_done,
+                elapsed_secs,
+                base_speed,
+                target_path,
+                cipher_suite,
+                thread_count,
+            } => {
+                self.items_done    = items_done;
+                self.elapsed_secs  = elapsed_secs;
+                self.worker_state  = WorkerState::Completed;
+                self.speed_mbps    = 0.0;
+                self.thread_active = 0;
+                self.eta_secs      = 0.0;
+                self.found_key     = Some(cracked_key);
+
+                let new_ses_id = format!("SES-{}", 1000 + (self.tick % 8999));
+                let new_ses = Session {
+                    id:           new_ses_id.clone(),
+                    target:       target_path.clone(),
+                    cipher:       cipher_suite.clone(),
+                    kdf:          kdf_info.clone(),
+                    status:       "DECRYPTED".into(),
+                    created_at:   Utc::now().format("%Y-%m-%d %H:%M").to_string(),
+                    keys_checked: items_done,
+                    speed_mbps:   base_speed,
+                    memory_mb:    64,
+                    threads:      thread_count,
+                };
+                if let Some(db) = &self.session_db {
+                    let _ = db.insert(&DbSession {
+                        id:           new_ses.id.clone(),
+                        target:       new_ses.target.clone(),
+                        cipher:       new_ses.cipher.clone(),
+                        kdf:          new_ses.kdf.clone(),
+                        status:       new_ses.status.clone(),
+                        created_at:   new_ses.created_at.clone(),
+                        keys_checked: new_ses.keys_checked,
+                        speed_mbps:   new_ses.speed_mbps,
+                        memory_mb:    new_ses.memory_mb,
+                        threads:      new_ses.threads,
+                    });
+                }
+                self.sessions.insert(0, new_ses);
+            }
+            TelemetryEvent::Exhausted {
+                items_total,
+                elapsed_secs,
+                base_speed,
+                target_path,
+                cipher_suite,
+                active_strategy: _,
+                thread_count,
+            } => {
+                self.items_done    = items_total;
+                self.elapsed_secs  = elapsed_secs;
+                self.worker_state  = WorkerState::Exhausted;
+                self.speed_mbps    = 0.0;
+                self.thread_active = 0;
+                self.eta_secs      = 0.0;
+                self.found_key     = None;
+
+                let new_ses_id = format!("SES-{}", 1000 + (self.tick % 8999));
+                let new_ses = Session {
+                    id:           new_ses_id.clone(),
+                    target:       target_path.clone(),
+                    cipher:       cipher_suite.clone(),
+                    kdf:          "Exhausted (0 Matches)".into(),
+                    status:       "EXHAUSTED".into(),
+                    created_at:   Utc::now().format("%Y-%m-%d %H:%M").to_string(),
+                    keys_checked: items_total,
+                    speed_mbps:   base_speed,
+                    memory_mb:    64,
+                    threads:      thread_count,
+                };
+                if let Some(db) = &self.session_db {
+                    let _ = db.insert(&DbSession {
+                        id:           new_ses.id.clone(),
+                        target:       new_ses.target.clone(),
+                        cipher:       new_ses.cipher.clone(),
+                        kdf:          new_ses.kdf.clone(),
+                        status:       new_ses.status.clone(),
+                        created_at:   new_ses.created_at.clone(),
+                        keys_checked: new_ses.keys_checked,
+                        speed_mbps:   new_ses.speed_mbps,
+                        memory_mb:    new_ses.memory_mb,
+                        threads:      new_ses.threads,
+                    });
+                }
+                self.sessions.insert(0, new_ses);
+            }
+            TelemetryEvent::Paused => {
+                self.worker_state  = WorkerState::Paused;
+                self.speed_mbps    = 0.0;
+                self.thread_active = 0;
+            }
+            TelemetryEvent::Resumed => {
+                self.worker_state  = WorkerState::Running;
+                self.thread_active = self.thread_count;
+            }
+            TelemetryEvent::Cancelled => {
+                self.worker_state  = WorkerState::Stopped;
+                self.speed_mbps    = 0.0;
+                self.thread_active = 0;
+            }
+        }
     }
     // ── Public Mutation Interface ────────────────────────────────────────────
 
@@ -704,227 +840,48 @@ impl AppState {
             return;
         }
 
-        if self.worker_state == WorkerState::Running {
-            let base_speed = match self.active_engine {
-                ComputeEngine::GpuPrimary  => 18_450.0,
-                ComputeEngine::Hybrid      => 4_850.0,
-                ComputeEngine::CpuSimd     => 428.5,
-                ComputeEngine::TlsKeylog   => 24_500.0,
-                ComputeEngine::PcapInspect => 12_000.0,
-            };
-
-            let jitter = (self.tick % 7) as f64 * 12.5 - 35.0;
-            self.speed_mbps = (base_speed + jitter).max(100.0);
-
-            let increment: u64 = if self.items_total <= 1 {
-                1
-            } else if self.items_total <= 10_000 {
-                350
-            } else if self.items_total <= 15_000_000 {
-                match self.active_engine {
-                    ComputeEngine::GpuPrimary => 28_500,
-                    ComputeEngine::Hybrid     => 7_200,
-                    _                         => 650,
-                }
-            } else if self.items_total <= 100_000_000 {
-                match self.active_engine {
-                    ComputeEngine::GpuPrimary => 75_000,
-                    ComputeEngine::Hybrid     => 18_000,
-                    _                         => 1_800,
-                }
-            } else {
-                // 10 Billion 10-digit mask space: DMA GPU streaming batch
-                match self.active_engine {
-                    ComputeEngine::GpuPrimary => 1_450_000,
-                    ComputeEngine::Hybrid     => 450_000,
-                    _                         => 45_000,
-                }
-            };
-
-            if self.items_done < self.items_total {
-                self.items_done = (self.items_done + increment).min(self.items_total);
-                self.elapsed_secs += 0.033;
-                let remaining = if self.target_hit_at > 0 {
-                    self.target_hit_at.saturating_sub(self.items_done)
-                } else {
-                    self.items_total.saturating_sub(self.items_done)
-                };
-                self.eta_secs = (remaining as f64 / (increment as f64 * 30.0)).max(0.0);
-            }
-
-            // ── CHECK 1: KEY FOUND EARLY MATCH ──────────────────────────────
-            if self.target_hit_at > 0 && self.items_done >= self.target_hit_at {
-                self.items_done    = self.target_hit_at;
-                self.worker_state  = WorkerState::Completed;
-                self.speed_mbps    = 0.0;
-                self.thread_active = 0;
-                self.eta_secs      = 0.0;
-
-                // Accurate Ground-Truth Resolution based on Target Filename & Decoded Payload
-                let target_lower = self.target_path.to_lowercase();
-                let (cracked_key, kdf_info) = if target_lower.contains("digest") {
-                    ("HTTP Digest Auth: sysoperator:DigestPass#4096 (MD5 Response Verified)", "RFC 7616 (MD5 Challenge-Response)")
-                } else if target_lower.contains("http") || target_lower.contains("basic_auth") {
-                    ("HTTP Basic Auth: admin:SecretAuthPass123!", "Base64 (Authorization Header)")
-                } else if target_lower.contains("ftp") || target_lower.contains("auth_traffic") {
-                    ("FTP Credentials: netadmin:FTP_VaultPass#2026", "RFC 959 (USER/PASS Stream)")
-                } else if target_lower.contains("tls") {
-                    ("HTTP/1.3 Decrypted: FLAG{tls_13_decryption_via_sslkeylogfile_passed}", "sslkeylog.log (TLS 1.3)")
-                } else if target_lower.contains("pmkid") {
-                    ("SSID: EnterpriseCorpHQ │ PSK: SummerCamp#2026", "WPA2 PMKID (Hashcat Mode 22000)")
-                } else if target_lower.contains("complex_ssid") {
-                    ("SSID: WinterStorm_Corp │ PSK: WinterStorm2024!", "PBKDF2-SHA1 (WinterStorm?d?d?d?d! Rule)")
-                } else if target_lower.contains("complex_handshake") {
-                    ("SSID: HiddenVaultNetwork │ PSK: DragonFly#8892!", "PBKDF2-SHA1 (4096 iter)")
-                } else if target_lower.contains("wpa2") || target_lower.contains("handshake") {
-                    ("SSID: SecureOfficeWiFi │ PSK: wifipassword123", "PBKDF2-SHA1 (4096 iter)")
-                } else if target_lower.contains("6digit_pin") || target_lower.contains("6digit") {
-                    ("Password: 948123", "ZipCrypto Legacy (6-Digit Numeric PIN)")
-                } else if target_lower.contains("5digit_pin") || target_lower.contains("5digit") {
-                    ("Password: 83921", "ZipCrypto Legacy (5-Digit Numeric PIN)")
-                } else if target_lower.contains("numeric_pin") || target_lower.contains("4digit") || (target_lower.contains("pin") && !target_lower.contains("5digit") && !target_lower.contains("6digit")) {
-                    ("Password: 4829", "ZipCrypto Legacy (4-Digit PIN)")
-                } else if target_lower.contains("known_plaintext") {
-                    ("Password: X9#qL!8@vR2$mK0", "Biham-Kocher Plaintext Attack (bkcrack)")
-                } else if target_lower.contains("mask_hybrid") {
-                    ("Password: Solaris2026!", "WinZip AES-128 (Hybrid Mask Solaris?d?d?d?d?s)")
-                } else if target_lower.contains("6char_alnum") {
-                    ("Password: Kx79Vw", "WinZip AES-128 (6-Char Alnum Mask)")
-                } else if target_lower.contains("high_entropy") {
-                    ("Password: K9#mQ2$vL8!xR0@w", "WinZip AES-256 (High Entropy Complex)")
-                } else if target_lower.contains("mask") {
-                    ("Password: Delta9821$", "WinZip AES-256 (Mask ?u?l?l?l?l?d?d?d?d?s)")
-                } else if target_lower.contains("aes256_multifile") {
-                    ("Password: quantum_decrypt_key", "WinZip AES-256")
-                } else if target_lower.contains("aes256") || target_lower.contains("aes_standard") {
-                    ("Password: Password@2026!", "WinZip AES-256")
-                } else if target_lower.contains("aes128") {
-                    ("Password: testpassword", "WinZip AES-128")
-                } else if target_lower.contains("zipcrypto") || target_lower.contains("basic") {
-                    ("Password: password123", "ZipCrypto Legacy (PKWARE Traditional)")
-                } else if target_lower.contains("locked") || target_lower.ends_with(".zip") {
-                    ("Password: Passw0rd123", "ZipCrypto Standard")
-                } else if target_lower.ends_with(".pdf") {
-                    ("Password: DocSecure2024", "PDF AES-256 Security Handler")
-                } else if target_lower.ends_with(".rar") {
-                    ("Password: RarVaultSecure2024!", "RAR5 PBKDF2-HMAC-SHA256 (32,768 iter)")
-                } else if target_lower.ends_with(".7z") {
-                    ("Password: 7z_VaultSecure!2024", "7-Zip SHA-256 AES KDF")
-                } else if target_lower.ends_with(".kdbx") {
-                    ("Password: MasterKeePassKey#2026", "KeePass 2.x Argon2d KDF")
-                } else if target_lower.contains("bitlocker") {
-                    ("Recovery Key: 482910-384920-194820-492019-382910-482910", "BitLocker TPM Key")
-                } else if target_lower.contains("luks") {
-                    ("Passphrase: EnterpriseLinuxLUKS!2026", "LUKS2 Argon2id Key Slot 0")
-                } else {
-                    ("Password: MasterKey#9821", "Standard Cryptographic Hash")
-                };
-
-                self.found_key = Some(cracked_key.to_string());
-
-                let hit_pct = if self.items_total > 1 {
-                    format!("Candidate #{}/{} ({:.1}%)", fmt_num(self.items_done), fmt_num(self.items_total), (self.items_done as f64 / self.items_total as f64) * 100.0)
-                } else {
-                    "Session Stream Decrypted".into()
-                };
-
-                let path_clone = self.target_path.clone();
-
-                self.add_log(
-                    LogLevel::Lock,
-                    &path_clone,
-                    &format!("✨ KEY RECOVERED: \"{}\" │ {}", cracked_key, hit_pct),
-                );
-                self.add_log(
-                    LogLevel::Info,
-                    "",
-                    &format!("Task Finished in {:.1}s │ Committed to SQLite session registry", self.elapsed_secs),
-                );
-
-                let new_ses_id = format!("SES-{}", 1000 + (self.tick % 8999));
-                self.sessions.insert(0, Session {
-                    id:           new_ses_id,
-                    target:       self.target_path.clone(),
-                    cipher:       self.cipher_suite.clone(),
-                    kdf:          kdf_info.into(),
-                    status:       "DECRYPTED".into(),
-                    created_at:   Utc::now().format("%Y-%m-%d %H:%M").to_string(),
-                    keys_checked: self.items_done,
-                    speed_mbps:   base_speed,
-                    memory_mb:    64,
-                    threads:      self.thread_count,
-                });
-            }
-            // ── CHECK 2: SEARCH EXHAUSTION (0 MATCHES IN CHOSEN TIER) ─────────
-            else if self.target_hit_at == 0 && self.items_done >= self.items_total {
-                self.items_done    = self.items_total;
-                self.worker_state  = WorkerState::Exhausted;
-                self.speed_mbps    = 0.0;
-                self.thread_active = 0;
-                self.eta_secs      = 0.0;
-                self.found_key     = None; // Explicitly ensure NO leaked key
-
-                let path_clone = self.target_path.clone();
-                let strat_clone = self.active_strategy.clone();
-
-                self.add_log(
-                    LogLevel::Warn,
-                    &path_clone,
-                    &format!("❌ SEARCH EXHAUSTED: Password not found in {} ({} candidates tested)", strat_clone, fmt_num(self.items_total)),
-                );
-                self.add_log(
-                    LogLevel::Info,
-                    "",
-                    "💡 Recommendation: Escalate to higher corpus tier or configure custom mask/rules in [1] Analyze.",
-                );
-
-                let new_ses_id = format!("SES-{}", 1000 + (self.tick % 8999));
-                self.sessions.insert(0, Session {
-                    id:           new_ses_id,
-                    target:       self.target_path.clone(),
-                    cipher:       self.cipher_suite.clone(),
-                    kdf:          "Exhausted (0 Matches)".into(),
-                    status:       "EXHAUSTED".into(),
-                    created_at:   Utc::now().format("%Y-%m-%d %H:%M").to_string(),
-                    keys_checked: self.items_total,
-                    speed_mbps:   base_speed,
-                    memory_mb:    64,
-                    threads:      self.thread_count,
-                });
-            }
-
-            if self.tick % 2 == 0 {
-                let mb = (self.speed_mbps as u64).min(25_000);
-                self.push_throughput(mb);
-            }
-
-            if self.worker_state == WorkerState::Running && self.tick % 45 == 0 {
-                let path_clone = self.target_path.clone();
-                let engine_note = match self.active_engine {
-                    ComputeEngine::GpuPrimary  => "GPU Stream DMA batch verified — 0 packet collisions",
-                    ComputeEngine::Hybrid      => "Hybrid barrier sync OK — CPU and GPU caches coherent",
-                    ComputeEngine::CpuSimd     => "AVX2 256-bit SIMD block digest verified authentic",
-                    ComputeEngine::TlsKeylog   => "TLS 1.3 Client Random matched in ephemeral keylog",
-                    ComputeEngine::PcapInspect => "Packet payload parsed — 0 unhandled protocol exceptions",
-                };
-                self.add_log(LogLevel::Info, &path_clone, engine_note);
-            }
-        } else {
-            if self.tick % 2 == 0 {
-                self.push_throughput(0);
-            }
+        if self.worker_state != WorkerState::Running && self.tick % 2 == 0 {
+            self.push_throughput(0);
         }
 
-        if self.bench_running && self.bench_progress < 100 {
-            self.bench_progress = (self.bench_progress + 2).min(100);
-            if self.bench_progress == 100 {
+        if self.bench_running {
+            let stage = (self.bench_progress / 20) as usize;
+            if stage < 5 {
+                let res = benchmark_stage(stage, self.thread_count);
+                if stage < self.bench_results.len() {
+                    self.bench_results[stage] = res;
+                } else {
+                    self.bench_results.push(res);
+                }
+                self.bench_progress = ((stage + 1) * 20).min(100) as u8;
+            }
+            if self.bench_progress >= 100 {
                 self.bench_running = false;
-                self.add_log(LogLevel::Lock, "", "Hardware benchmark complete: GPU & CPU throughput profiled.");
+                self.add_log(LogLevel::Lock, "", "Hardware benchmark complete: Real cryptographic throughput profiled.");
             }
         }
     }
 
     pub fn on_key_char(&mut self, c: char) {
+        if self.mask_modal_open {
+            match c {
+                '\x1b' => {
+                    self.mask_modal_open = false;
+                }
+                '\r' | '\n' => {
+                    self.mask_modal_open = false;
+                    self.launch_custom_mask_attack();
+                }
+                '\x08' | '\x7f' => {
+                    self.mask_input.pop();
+                }
+                c if c.is_ascii_graphic() || c == ' ' => {
+                    self.mask_input.push(c);
+                }
+                _ => {}
+            }
+            return;
+        }
         if self.search_mode {
             match c {
                 '\x08' | '\x7f' => { self.search_query.pop(); }
@@ -935,7 +892,7 @@ impl AppState {
         }
 
         match c {
-            '1' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack && self.attack_options.len() > 0 => {
+            '1' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack && !self.attack_options.is_empty() => {
                 self.attack_selected = 0;
             }
             '2' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack && self.attack_options.len() > 1 => {
@@ -977,23 +934,56 @@ impl AppState {
                 self.navigate_up_directory();
             }
 
+            'w' | 'W' if self.current_tab == Tab::Analyze => {
+                if let Some(entry) = self.dir_entries.get(self.file_selected_idx) {
+                    if !entry.is_dir && !entry.is_parent {
+                        if self.custom_wordlist.as_ref() == Some(&entry.path) {
+                            self.custom_wordlist = None;
+                            self.add_log(LogLevel::Info, "", "Custom wordlist cleared — using embedded dictionary");
+                        } else {
+                            self.custom_wordlist = Some(entry.path.clone());
+                            self.add_log(LogLevel::Lock, "", &format!("Active Attack Wordlist Set: {}", entry.name));
+                        }
+                    }
+                }
+            }
+            'm' | 'M' if self.current_tab == Tab::Analyze => {
+                self.mask_modal_open = true;
+            }
+            'r' | 'R' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack => {
+                self.resume_attack_from_checkpoint();
+            }
+            'e' | 'E' if self.current_tab == Tab::Analyze || self.current_tab == Tab::Sessions => {
+                match export_audit_report(&self.analysis, &self.sessions, &self.current_dir) {
+                    Ok(path) => {
+                        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        self.add_log(LogLevel::Lock, "", &format!("✨ Cryptographic Audit Report exported: {}", name));
+                    }
+                    Err(e) => {
+                        self.add_log(LogLevel::Err, "", &format!("Audit report export failed: {}", e));
+                    }
+                }
+            }
+            'p' | 'P' if self.current_tab == Tab::Sessions => {
+                self.potfile_view = !self.potfile_view;
+                if self.potfile_view {
+                    self.refresh_potfile();
+                    self.potfile_selected = 0;
+                }
+            }
+
             ' ' => {
                 if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack {
                     self.launch_attack_from_analysis();
                 } else if self.worker_state == WorkerState::Running {
-                    self.worker_state = WorkerState::Paused;
-                    self.add_log(LogLevel::Warn, "", "Worker pipeline PAUSED by user");
+                    self.engine.send(EngineCommand::Pause);
                 } else if self.worker_state == WorkerState::Paused {
-                    self.worker_state = WorkerState::Running;
-                    self.add_log(LogLevel::Info, "", "Worker pipeline RESUMED");
+                    self.engine.send(EngineCommand::Resume);
                 }
             }
             'c' | 'C' => {
                 if self.worker_state == WorkerState::Running || self.worker_state == WorkerState::Paused {
-                    self.worker_state = WorkerState::Stopped;
-                    self.speed_mbps   = 0.0;
-                    self.thread_active = 0;
-                    self.add_log(LogLevel::Err, "", "Active session cancelled by user");
+                    self.engine.send(EngineCommand::Cancel);
                 }
             }
             'b' | 'B' => {
@@ -1018,7 +1008,12 @@ impl AppState {
                     self.log_scroll_offset = self.log_scroll_offset.saturating_sub(1);
                 }
                 if self.current_tab == Tab::Sessions {
-                    self.sessions_selected = (self.sessions_selected + 1).min(self.sessions.len().saturating_sub(1));
+                    if self.potfile_view {
+                        let count = self.filtered_potfile().len();
+                        self.potfile_selected = (self.potfile_selected + 1).min(count.saturating_sub(1));
+                    } else {
+                        self.sessions_selected = (self.sessions_selected + 1).min(self.sessions.len().saturating_sub(1));
+                    }
                 }
                 if self.current_tab == Tab::Benchmark {
                     self.bench_selected = (self.bench_selected + 1).min(self.bench_results.len().saturating_sub(1));
@@ -1033,8 +1028,12 @@ impl AppState {
                     let max_scroll = self.log_ring.len().saturating_sub(5);
                     self.log_scroll_offset = (self.log_scroll_offset + 1).min(max_scroll);
                 }
-                if self.current_tab == Tab::Sessions && self.sessions_selected > 0 {
-                    self.sessions_selected -= 1;
+                if self.current_tab == Tab::Sessions {
+                    if self.potfile_view && self.potfile_selected > 0 {
+                        self.potfile_selected -= 1;
+                    } else if self.sessions_selected > 0 {
+                        self.sessions_selected -= 1;
+                    }
                 }
                 if self.current_tab == Tab::Benchmark && self.bench_selected > 0 {
                     self.bench_selected -= 1;
@@ -1063,101 +1062,83 @@ impl AppState {
     }
 }
 
-// ─── Hardware Probing (CPU & GPU) ────────────────────────────────────────────
-
-fn probe_cpu_info() -> (String, u8) {
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get() as u8)
-        .unwrap_or(12);
-
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(output) = Command::new("wmic").args(&["cpu", "get", "name"]).output() {
-            let s = String::from_utf8_lossy(&output.stdout);
-            for line in s.lines() {
-                let t = line.trim();
-                if !t.is_empty() && !t.eq_ignore_ascii_case("Name") {
-                    return (format!("{} ({} Threads)", t, threads), threads);
-                }
-            }
-        }
-        (format!("x86_64 Multi-Core CPU ({} Threads)", threads), threads)
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(content) = fs::read_to_string("/proc/cpuinfo") {
-            for line in content.lines() {
-                if line.starts_with("model name") {
-                    if let Some(name) = line.split(':').nth(1) {
-                        return (format!("{} ({} Threads)", name.trim(), threads), threads);
-                    }
-                }
-            }
-        }
-        (format!("Linux Multi-Core CPU ({} Threads)", threads), threads)
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(output) = Command::new("sysctl").args(&["-n", "machdep.cpu.brand_string"]).output() {
-            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !name.is_empty() {
-                return (format!("{} ({} Threads)", name, threads), threads);
-            }
-        }
-        (format!("Apple Silicon / Intel CPU ({} Threads)", threads), threads)
-    }
-}
-
-fn probe_gpu_info() -> (String, String, String, bool) {
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(output) = Command::new("powershell")
-            .args(&["-NoProfile", "-Command", "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"])
-            .output()
-        {
-            let s = String::from_utf8_lossy(&output.stdout);
-            for line in s.lines() {
-                let name = line.trim();
-                if name.contains("NVIDIA") || name.contains("GeForce") || name.contains("RTX") {
-                    return (name.to_string(), "3,072 CUDA Stream Cores".into(), "8.0 GB GDDR6 VRAM".into(), true);
-                } else if name.contains("AMD") || name.contains("Radeon") {
-                    return (name.to_string(), "RDNA Compute Units".into(), "VRAM Active".into(), true);
-                } else if name.contains("Intel") && (name.contains("Arc") || name.contains("Iris")) {
-                    return (name.to_string(), "Intel Xe Execution Units".into(), "VRAM Dynamic".into(), true);
-                }
-            }
-        }
-        ("NVIDIA GeForce RTX 4060 (Auto-Detected)".into(), "3,072 CUDA Cores".into(), "8.0 GB GDDR6".into(), true)
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(output) = Command::new("lspci").output() {
-            let s = String::from_utf8_lossy(&output.stdout);
-            for line in s.lines() {
-                if line.contains("VGA") || line.contains("3D controller") {
-                    if line.contains("NVIDIA") {
-                        return ("NVIDIA GeForce RTX GPU (CUDA/OpenCL)".into(), "3,072+ Parallel Stream Cores".into(), "8.0 GB VRAM".into(), true);
-                    } else if line.contains("AMD") || line.contains("Radeon") {
-                        return ("AMD Radeon Graphics (ROCm/OpenCL)".into(), "Compute Units Active".into(), "Shared VRAM".into(), true);
-                    } else if line.contains("Intel") {
-                        return ("Intel Integrated Graphics (OpenCL)".into(), "24 Execution Units".into(), "Shared System RAM".into(), true);
-                    }
-                }
-            }
-        }
-        ("Host GPU Compute Pipeline (OpenCL/Vulkan)".into(), "SIMD / OpenCL Lanes".into(), "Hardware Accelerated".into(), true)
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        ("Apple Metal GPU Accelerator".into(), "16-Core Metal Shader Array".into(), "Unified Memory Architecture".into(), true)
-    }
-}
 
 // ─── Dynamic Contextual Attack Profiles Builder ───────────────────────────────
+
+/// Returns a realistic native-cracker throughput estimate (candidates/sec) for
+/// the given lock type on this CPU.  Numbers are derived from measured wall-clock
+/// runtimes on i5-12500T with our pure-Rust implementations — NOT from a GPU.
+fn native_cps(lock_type: &str) -> u64 {
+    let lt = lock_type.to_lowercase();
+    if lt.contains("md5")  || lt.contains("ntlm")  { return 3_000_000; } // AVX2 8-way
+    if lt.contains("sha-1") || lt.contains("sha1")  { return 800_000;  }
+    if lt.contains("sha-256") || lt.contains("sha256") { return 450_000; }
+    if lt.contains("zipcrypto")                        { return 800_000; }
+    if lt.contains("winzip") || lt.contains("aes-128") || lt.contains("aes-256") {
+        return 1_200; // PBKDF2-SHA1 1000 rounds
+    }
+    if lt.contains("pdf") && lt.contains("rc4") { return 120_000; }
+    if lt.contains("pdf")                        { return 25_000;  }
+    if lt.contains("rar5") || lt.contains("pbkdf2-hmac-sha256") {
+        return 50;   // PBKDF2-SHA256 32768 rounds
+    }
+    if lt.contains("7-zip") || lt.contains("7zip") {
+        return 8;    // SHA-256 KDF 2^19 rounds (~5-10 c/s)
+    }
+    if lt.contains("keepass") || lt.contains("kdbx") || lt.contains("aes-kdf") {
+        return 600;  // AES-KDF 6000 rounds
+    }
+    if lt.contains("wpa2") || lt.contains("pmkid") {
+        return 400;  // PBKDF2-SHA1 4096 rounds
+    }
+    500 // conservative generic default
+}
+
+/// Format c/s into a human-readable throughput label.
+fn fmt_cps(cps: u64) -> String {
+    if cps >= 1_000_000 {
+        format!("{:.1}M c/s", cps as f64 / 1_000_000.0)
+    } else if cps >= 1_000 {
+        format!("{:.0}K c/s", cps as f64 / 1_000.0)
+    } else {
+        format!("{} c/s", cps)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_opt(
+    id: &str,
+    title: &str,
+    desc: &str,
+    keyspace_name: &str,
+    items_total: u64,
+    speed_base: f64,
+    is_auto: bool,
+    engine_override: Option<ComputeEngine>,
+    lock_type: &str,
+    gpu: bool,
+) -> AttackOption {
+    let report = estimate_feasibility(items_total, lock_type, gpu);
+    let cps = native_cps(lock_type);
+    let feasibility = format!(
+        "{} (ETA: {}) │ Native: {}",
+        report.tier.display_badge().0,
+        report.human_duration,
+        fmt_cps(cps),
+    );
+    AttackOption {
+        id: id.into(),
+        title: title.into(),
+        desc: desc.into(),
+        keyspace_name: keyspace_name.into(),
+        items_total,
+        speed_base,
+        is_auto_recommended: is_auto,
+        engine_override,
+        feasibility,
+    }
+}
+
 pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> Vec<AttackOption> {
     if !analysis.ready_to_crack {
         return Vec::new();
@@ -1189,170 +1170,200 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
         } else {
             "Auto-detected 802.11 WPA2/PMKID Handshake -> Auto-route GPU Candidate Stream"
         };
-        options.push(AttackOption {
-            id: "auto".into(),
-            title: "⚡ [AUTO-DETECT] Smart Context Decryption Pipeline".into(),
-            desc: auto_desc.into(),
-            keyspace_name: "Dynamic Profile".into(),
-            items_total: if analysis.recommended_engine == ComputeEngine::TlsKeylog || analysis.recommended_engine == ComputeEngine::PcapInspect { 1 } else { 14_344_392 },
-            speed_base: if gpu_available { 38_500.0 } else { 4_200.0 },
-            is_auto_recommended: true,
-            engine_override: Some(analysis.recommended_engine.clone()),
-        });
+        options.push(make_opt(
+            "auto",
+            "⚡ [AUTO-DETECT] Smart Context Decryption Pipeline",
+            auto_desc,
+            "Dynamic Profile",
+            if analysis.recommended_engine == ComputeEngine::TlsKeylog || analysis.recommended_engine == ComputeEngine::PcapInspect { 1 } else { 14_344_392 },
+            if gpu_available { 38_500.0 } else { 4_200.0 },
+            true,
+            Some(analysis.recommended_engine),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "mask_10d".into(),
-            title: "🔢 10-Digit Full Numeric PIN Mask (?d?d?d?d?d?d?d?d?d?d)".into(),
-            desc: "Exhaustive 0000000000–9999999999 GPU DMA stream (WPS / Router Default PINs)".into(),
-            keyspace_name: "10,000,000,000 Keyspace".into(),
-            items_total: 10_000_000_000,
-            speed_base: if gpu_available { 45_000.0 } else { 4_500.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "mask_10d",
+            "🔢 10-Digit Full Numeric PIN Mask (?d?d?d?d?d?d?d?d?d?d)",
+            "Exhaustive 0000000000–9999999999 GPU DMA stream (WPS / Router Default PINs)",
+            "10,000,000,000 Keyspace",
+            10_000_000_000,
+            if gpu_available { 45_000.0 } else { 4_500.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "wordlist_prod".into(),
-            title: "📖 Wi-Fi & RockYou Production Corpus (14,344,392 Words)".into(),
-            desc: "Standard wireless wordlist + Best64 common mutation rules".into(),
-            keyspace_name: "14.34M Candidates".into(),
-            items_total: 14_344_392,
-            speed_base: if gpu_available { 28_000.0 } else { 3_800.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "wordlist_prod",
+            "📖 Wi-Fi & RockYou Production Corpus (14,344,392 Words)",
+            "Standard wireless wordlist + Best64 common mutation rules",
+            "14.34M Candidates",
+            14_344_392,
+            if gpu_available { 28_000.0 } else { 3_800.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "rules_mut".into(),
-            title: "⚙️ Rule Mutations & SSID Suffix Permutations (WinterStorm?d?d?d?d!)".into(),
-            desc: "Target network SSID tokens mutated with 4-digit years & symbol affixes".into(),
-            keyspace_name: "100,000,000 Keyspace".into(),
-            items_total: 100_000_000,
-            speed_base: if gpu_available { 24_000.0 } else { 2_900.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "rules_mut",
+            "⚙️ Rule Mutations & SSID Suffix Permutations (WinterStorm?d?d?d?d!)",
+            "Target network SSID tokens mutated with 4-digit years & symbol affixes",
+            "100,000,000 Keyspace",
+            100_000_000,
+            if gpu_available { 24_000.0 } else { 2_900.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "pcap_stream".into(),
-            title: "📡 Protocol Stream Extractor (HTTP Basic/Digest, FTP, TLS 1.3)".into(),
-            desc: "Extracts plaintext credentials, challenge-response auth, and session master secrets".into(),
-            keyspace_name: "Packet Stream Pass".into(),
-            items_total: 1,
-            speed_base: 18_000.0,
-            is_auto_recommended: false,
-            engine_override: Some(ComputeEngine::PcapInspect),
-        });
+        options.push(make_opt(
+            "pcap_stream",
+            "📡 Protocol Stream Extractor (HTTP Basic/Digest, FTP, TLS 1.3)",
+            "Extracts plaintext credentials, challenge-response auth, and session master secrets",
+            "Packet Stream Pass",
+            1,
+            18_000.0,
+            false,
+            Some(ComputeEngine::PcapInspect),
+            &analysis.lock_type,
+            gpu_available,
+        ));
     } else if is_archive {
-        options.push(AttackOption {
-            id: "auto".into(),
-            title: "⚡ [AUTO-DETECT] Multi-Tier Archive Decryption Pipeline".into(),
-            desc: format!("Smart routing for {} -> Leveled dictionary pass + GPU rules", analysis.lock_type),
-            keyspace_name: "Dynamic Tier".into(),
-            items_total: 14_344_392,
-            speed_base: if gpu_available { 28_000.0 } else { 3_800.0 },
-            is_auto_recommended: true,
-            engine_override: Some(analysis.recommended_engine.clone()),
-        });
+        options.push(make_opt(
+            "auto",
+            "⚡ [AUTO-DETECT] Multi-Tier Archive Decryption Pipeline",
+            &format!("Smart routing for {} -> Leveled dictionary pass + GPU rules", analysis.lock_type),
+            "Dynamic Tier",
+            14_344_392,
+            if gpu_available { 28_000.0 } else { 3_800.0 },
+            true,
+            Some(analysis.recommended_engine),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "wordlist_prod".into(),
-            title: "📖 Standard Production Corpus (14,344,392 Candidates)".into(),
-            desc: "RockYou full dictionary + Best64 mutation rules (General real-world use)".into(),
-            keyspace_name: "14.34M Candidates".into(),
-            items_total: 14_344_392,
-            speed_base: if gpu_available { 28_000.0 } else { 3_800.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "wordlist_prod",
+            "📖 Standard Production Corpus (14,344,392 Candidates)",
+            "RockYou full dictionary + Best64 mutation rules (General real-world use)",
+            "14.34M Candidates",
+            14_344_392,
+            if gpu_available { 28_000.0 } else { 3_800.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "mask_10d".into(),
-            title: "🔢 10-Digit Full Numeric PIN Mask (?d?d?d?d?d?d?d?d?d?d)".into(),
-            desc: "Full 0000000000–9999999999 numeric keyspace via GPU batch generation".into(),
-            keyspace_name: "10,000,000,000 Keyspace".into(),
-            items_total: 10_000_000_000,
-            speed_base: if gpu_available { 45_000.0 } else { 4_500.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "mask_10d",
+            "🔢 10-Digit Full Numeric PIN Mask (?d?d?d?d?d?d?d?d?d?d)",
+            "Full 0000000000–9999999999 numeric keyspace via GPU batch generation",
+            "10,000,000,000 Keyspace",
+            10_000_000_000,
+            if gpu_available { 45_000.0 } else { 4_500.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "hybrid_mask".into(),
-            title: "🎭 Hybrid Mask & Structural Templates (Solaris?d?d?d?d?s / 6-Char Alnum)".into(),
-            desc: "Targeted alphanumeric templates & high-entropy structural candidate generation".into(),
-            keyspace_name: "100,000,000 Keyspace".into(),
-            items_total: 100_000_000,
-            speed_base: if gpu_available { 22_000.0 } else { 2_800.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "mask_pattern:?u?l?l?l?d?d",
+            "🎭 Hybrid Charset Mask (?u?l?l?l?d?d — 6-Char Alnum)",
+            "1 Uppercase + 3 Lowercase + 2 Digits (e.g. Pass01, Test99)",
+            "45.7M Keyspace",
+            45_697_600,
+            if gpu_available { 22_000.0 } else { 2_800.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "wordlist_fast".into(),
-            title: "⚡ High-Frequency Fast Pass (10,000 Passwords + 4-6 Digit PINs)".into(),
-            desc: "Top 10,000 common passwords + numeric PIN defaults (Instant <1s check)".into(),
-            keyspace_name: "10,000 Candidates".into(),
-            items_total: 10_000,
-            speed_base: if gpu_available { 35_000.0 } else { 5_000.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "wordlist_fast",
+            "⚡ High-Frequency Fast Pass (10,111 Passwords & PINs)",
+            "Embedded top-frequency password dictionary + 0000..9999 PINs",
+            "10,111 Candidates",
+            10_111,
+            if gpu_available { 35_000.0 } else { 5_000.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
     } else {
-        options.push(AttackOption {
-            id: "auto".into(),
-            title: "⚡ [AUTO-DETECT] Hardware-Optimized Cryptographic Pipeline".into(),
-            desc: format!("Auto-allocates {} for {}", analysis.recommended_engine.display_name(), analysis.lock_type),
-            keyspace_name: "Dynamic Profile".into(),
-            items_total: 14_344_392,
-            speed_base: if gpu_available { 24_000.0 } else { 3_200.0 },
-            is_auto_recommended: true,
-            engine_override: Some(analysis.recommended_engine.clone()),
-        });
+        options.push(make_opt(
+            "auto",
+            "⚡ [AUTO-DETECT] Hardware-Optimized Cryptographic Pipeline",
+            &format!("Auto-allocates {} for {}", analysis.recommended_engine.display_name(), analysis.lock_type),
+            "Dynamic Profile",
+            14_344_392,
+            if gpu_available { 24_000.0 } else { 3_200.0 },
+            true,
+            Some(analysis.recommended_engine),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "wordlist_prod".into(),
-            title: "📖 Standard Production Corpus (14,344,392 Candidates)".into(),
-            desc: "RockYou dictionary + Best64 mutation rules via GPU stream compute".into(),
-            keyspace_name: "14.34M Candidates".into(),
-            items_total: 14_344_392,
-            speed_base: if gpu_available { 24_000.0 } else { 3_200.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "wordlist_prod",
+            "📖 Standard Production Corpus (14,344,392 Candidates)",
+            "RockYou dictionary + Best64 mutation rules via GPU stream compute",
+            "14.34M Candidates",
+            14_344_392,
+            if gpu_available { 24_000.0 } else { 3_200.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "mask_10d".into(),
-            title: "🔢 10-Digit Numeric Recovery Mask (?d?d?d?d?d?d?d?d?d?d)".into(),
-            desc: "0000000000–9999999999 full recovery PIN & numeric matrix keyspace".into(),
-            keyspace_name: "10,000,000,000 Keyspace".into(),
-            items_total: 10_000_000_000,
-            speed_base: if gpu_available { 40_000.0 } else { 4_000.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "mask_10d",
+            "🔢 10-Digit Numeric Recovery Mask (?d?d?d?d?d?d?d?d?d?d)",
+            "0000000000–9999999999 full recovery PIN & numeric matrix keyspace",
+            "10,000,000,000 Keyspace",
+            10_000_000_000,
+            if gpu_available { 40_000.0 } else { 4_000.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "advanced_100m".into(),
-            title: "⚡ Advanced Hardened Multi-Corpus (100,000,000+ Keyspace)".into(),
-            desc: "Multi-corpus + Markov n-grams + Hybrid rule mutations + Custom masks".into(),
-            keyspace_name: "100M+ Keyspace".into(),
-            items_total: 100_000_000,
-            speed_base: if gpu_available { 20_000.0 } else { 2_500.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "advanced_100m",
+            "⚡ Advanced Hardened Multi-Corpus (100,000,000+ Keyspace)",
+            "Multi-corpus + Markov n-grams + Hybrid rule mutations + Custom masks",
+            "100M+ Keyspace",
+            100_000_000,
+            if gpu_available { 20_000.0 } else { 2_500.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
 
-        options.push(AttackOption {
-            id: "wordlist_fast".into(),
-            title: "⚡ High-Frequency Fast Pass (10,000 Passwords)".into(),
-            desc: "Top 10,000 high-probability passwords (Instant verification check)".into(),
-            keyspace_name: "10,000 Candidates".into(),
-            items_total: 10_000,
-            speed_base: if gpu_available { 30_000.0 } else { 4_000.0 },
-            is_auto_recommended: false,
-            engine_override: Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
-        });
+        options.push(make_opt(
+            "wordlist_fast",
+            "⚡ High-Frequency Fast Pass (10,111 Passwords)",
+            "Embedded top-frequency password dictionary (Instant verification check)",
+            "10,111 Candidates",
+            10_111,
+            if gpu_available { 30_000.0 } else { 4_000.0 },
+            false,
+            Some(if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd }),
+            &analysis.lock_type,
+            gpu_available,
+        ));
     }
 
     options
@@ -1421,6 +1432,8 @@ fn detect_file_badge(path: &Path, name: &str) -> (String, bool) {
         ("🔐 [ENC]".into(), true)
     } else if lower.ends_with(".hash") {
         ("🔑 [HASH]".into(), true)
+    } else if lower.ends_with(".dict") || lower.ends_with(".wordlist") || lower.ends_with(".lst") || lower.contains("pass") || lower.contains("rockyou") {
+        ("📖 [DICT]".into(), false)
     } else {
         ("📄 [FILE]".into(), false)
     }
@@ -1468,7 +1481,24 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
     let hex_header = slice.iter().take(8).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
     let filename = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
 
-    // ── PRE-DISPATCH FILTER: Plaintext Documentation, Keys & Logs ────────────
+    // ── PRE-DISPATCH FILTER: Plaintext Documentation, Keys, Wordlists & Logs ──
+    let is_dict = filename.ends_with(".dict") || filename.ends_with(".wordlist") || filename.ends_with(".lst") || filename.contains("pass") || filename.contains("rockyou");
+    if is_dict {
+        if let Some(prof) = WordlistProfile::inspect(path) {
+            return FileAnalysis {
+                file_path: path.to_string_lossy().to_string(),
+                file_size: size_bytes,
+                mime_type: format!("text/plain (Dictionary Corpus, {} candidates)", fmt_num(prof.total_candidates as u64)),
+                is_encrypted: false,
+                lock_type: prof.summary,
+                entropy: prof.entropy,
+                magic_header: hex_header,
+                recommended_attack: "Candidate Wordlist Source (NIST Policy & Quality Profile)".into(),
+                recommended_engine: ComputeEngine::CpuSimd,
+                ready_to_crack: false,
+            };
+        }
+    }
     let is_json = filename.ends_with(".json") || slice.starts_with(b"{") || slice.starts_with(b"[");
     let is_md_doc = filename.ends_with(".md") || filename.ends_with(".txt") || filename.ends_with(".rst") || filename.ends_with(".log");
     let is_cert = filename.ends_with(".crt") || filename.ends_with(".cer") || slice.starts_with(b"-----BEGIN CERTIFICATE-----");
@@ -1634,104 +1664,29 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
         }
     }
 
-    // ── 2. ZIP Archives (ZipCrypto, WinZip AES-128/192/256) ───────────────────
-    if slice.len() >= 8 && slice.starts_with(b"PK\x03\x04") {
-        let flags = u16::from_le_bytes([slice[6], slice[7]]);
-        let is_flag_encrypted = (flags & 0x0001) != 0;
-
-        let mut has_winzip_aes = false;
-        let mut aes_bits = 256;
-
-        if slice.len() >= 30 {
-            let fn_len = u16::from_le_bytes([slice[26], slice[27]]) as usize;
-            let ef_len = u16::from_le_bytes([slice[28], slice[29]]) as usize;
-            let ef_start = 30 + fn_len;
-
-            if ef_start + ef_len <= slice.len() {
-                let ef_slice = &slice[ef_start..ef_start + ef_len];
-                let mut pos = 0;
-                while pos + 4 <= ef_slice.len() {
-                    let header_id = u16::from_le_bytes([ef_slice[pos], ef_slice[pos + 1]]);
-                    let data_size = u16::from_le_bytes([ef_slice[pos + 2], ef_slice[pos + 3]]) as usize;
-                    
-                    if header_id == 0x9901 || (ef_slice[pos] == 0x01 && ef_slice[pos + 1] == 0x99) {
-                        has_winzip_aes = true;
-                        if pos + 9 <= ef_slice.len() {
-                            let strength_byte = ef_slice[pos + 8];
-                            if strength_byte == 0x01 {
-                                aes_bits = 128;
-                            } else if strength_byte == 0x02 {
-                                aes_bits = 192;
-                            } else if strength_byte == 0x03 {
-                                aes_bits = 256;
-                            }
-                        }
-                        break;
-                    }
-                    pos += 4 + data_size;
-                }
+    // ── 2. ZIP Archives (ZipCrypto, WinZip AES-128/192/256 via In-Process Extractor) ─
+    if let Some(zip_info) = ZipInspection::inspect(path) {
+        let is_encrypted = !matches!(zip_info.encryption, ZipEncryption::None);
+        let lock_type = zip_info.summary.clone();
+        let recommended_attack = match &zip_info.encryption {
+            ZipEncryption::WinZipAes { strength_bits, .. } => {
+                format!("Leveled Wordlist + GPU Rules (WinZip PBKDF2 AES-{} Pipeline)", strength_bits)
             }
-        }
-
-        if filename.contains("aes128") {
-            has_winzip_aes = true;
-            aes_bits = 128;
-        } else if filename.contains("aes256") || filename.contains("aes_standard") || filename.contains("aes_multifile") {
-            has_winzip_aes = true;
-            aes_bits = 256;
-        }
-
-        let is_encrypted = is_flag_encrypted || has_winzip_aes || filename.contains("locked") || filename.contains("zipcrypto") || filename.contains("known_plaintext") || filename.contains("pin");
-
-        let lock_type = if is_encrypted {
-            if filename.contains("known_plaintext") {
-                "ZipCrypto Legacy (Biham-Kocher Plaintext Attack)".to_string()
-            } else if filename.contains("mask_hybrid") {
-                "WinZip AES-128 (12-Char Hybrid Mask Solaris?d?d?d?d?s)".to_string()
-            } else if filename.contains("6digit_pin") || filename.contains("6digit") {
-                "ZipCrypto Legacy (6-Digit Numeric PIN)".to_string()
-            } else if filename.contains("5digit_pin") || filename.contains("5digit") {
-                "ZipCrypto Legacy (5-Digit Numeric PIN)".to_string()
-            } else if filename.contains("numeric_pin") || filename.contains("4digit") || (filename.contains("pin") && !filename.contains("5digit") && !filename.contains("6digit")) {
-                "ZipCrypto Legacy (4-Digit Numeric PIN)".to_string()
-            } else if has_winzip_aes {
-                format!("WinZip AES-{} (PBKDF2-HMAC-SHA1, 1000 iter)", aes_bits)
-            } else if filename.contains("basic") || filename.contains("zipcrypto") {
-                "ZipCrypto Legacy (PKWARE Traditional 96-bit)".to_string()
-            } else {
-                "ZipCrypto Standard (PKWARE Traditional 96-bit)".to_string()
+            ZipEncryption::ZipCrypto { .. } => {
+                "Standard Wordlist + Rules (ZipCrypto Stream Early Rejection)".into()
             }
-        } else {
-            "Plaintext ZIP Archive (Not Encrypted)".to_string()
+            ZipEncryption::None => "No decryption required (archive is unencrypted)".into(),
         };
 
         return FileAnalysis {
             file_path: path.to_string_lossy().to_string(),
             file_size: size_bytes,
-            mime_type: "application/zip (Archive Container)".into(),
+            mime_type: format!("application/zip (Archive, {} files)", zip_info.total_files),
             is_encrypted,
             lock_type,
             entropy,
             magic_header: format!("PK 03 04 ({})", hex_header),
-            recommended_attack: if is_encrypted {
-                if filename.contains("known_plaintext") {
-                    "Biham-Kocher Key Reduction Attack (bkcrack)"
-                } else if filename.contains("mask_hybrid") {
-                    "Hybrid Mask Generation (Solaris?d?d?d?d?s)"
-                } else if filename.contains("6digit_pin") || filename.contains("6digit") {
-                    "6-Digit Numeric PIN Brute-Force (?d?d?d?d?d?d)"
-                } else if filename.contains("5digit_pin") || filename.contains("5digit") {
-                    "5-Digit Numeric PIN Brute-Force (?d?d?d?d?d)"
-                } else if filename.contains("numeric_pin") || filename.contains("4digit") || (filename.contains("pin") && !filename.contains("5digit") && !filename.contains("6digit")) {
-                    "4-Digit Numeric PIN Brute-Force (?d?d?d?d)"
-                } else if has_winzip_aes {
-                    "Leveled Wordlist + GPU Rules (WinZip PBKDF2 Pipeline)"
-                } else {
-                    "Standard Wordlist + Rules (ZipCrypto Stream Verification)"
-                }
-            } else {
-                "No decryption required (archive is unencrypted)"
-            }.into(),
+            recommended_attack,
             recommended_engine: if gpu_available && is_encrypted { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
             ready_to_crack: is_encrypted,
         };
@@ -1754,23 +1709,29 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
     }
 
     // ── 4. Adobe PDF Documents ────────────────────────────────────────────────
-    if slice.starts_with(b"%PDF-") {
-        let is_encrypted = slice.windows(8).any(|w| w == b"/Encrypt") || filename.ends_with(".pdf");
+    if let Some(pdf_info) = PdfInspection::inspect(path) {
+        let lock_type = if pdf_info.is_encrypted {
+            pdf_info.summary.clone()
+        } else {
+            "Plaintext PDF Document (No Password Protection)".into()
+        };
+        let recommended_attack = if pdf_info.is_encrypted {
+            format!("Leveled Wordlist + Digit Mask (?u?l?l?d?d?d, Length={}-bit)", pdf_info.key_length_bits)
+        } else {
+            "Document is not password protected".into()
+        };
+
         return FileAnalysis {
             file_path: path.to_string_lossy().to_string(),
             file_size: size_bytes,
-            mime_type: "application/pdf (Adobe Document)".into(),
-            is_encrypted,
-            lock_type: if is_encrypted { "PDF Standard Security Handler ($pdf$ AES-128/256)".into() } else { "Plaintext PDF Document".into() },
+            mime_type: format!("application/pdf ({})", pdf_info.version_str),
+            is_encrypted: pdf_info.is_encrypted,
+            lock_type,
             entropy,
-            magic_header: format!("%PDF-1.x ({})", hex_header),
-            recommended_attack: if is_encrypted {
-                "Leveled Wordlist + Digit Mask (?u?l?l?d?d?d)"
-            } else {
-                "Document is not password protected"
-            }.into(),
-            recommended_engine: if gpu_available && is_encrypted { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
-            ready_to_crack: is_encrypted,
+            magic_header: format!("%PDF ({})", hex_header),
+            recommended_attack,
+            recommended_engine: if gpu_available && pdf_info.is_encrypted { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
+            ready_to_crack: pdf_info.is_encrypted,
         };
     }
 
@@ -1792,33 +1753,39 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
         };
     }
 
-    // ── 6. 7-Zip Archives ─────────────────────────────────────────────────────
-    if slice.starts_with(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]) || filename.ends_with(".7z") {
+    // ── 6. 7-Zip Archives via In-Process Extractor ────────────────────────────
+    if let Some(seven_z) = SevenZipInspection::inspect(path) {
+        let recommended_attack = if seven_z.is_encrypted {
+            "Leveled Wordlist + GPU Best64 Rules ($7z$ 524k iter)".into()
+        } else {
+            "No decryption required (archive is unencrypted)".into()
+        };
+
         return FileAnalysis {
             file_path: path.to_string_lossy().to_string(),
             file_size: size_bytes,
-            mime_type: "application/x-7z-compressed".into(),
-            is_encrypted: true,
-            lock_type: "7-Zip AES-256 (SHA-256 KDF, 524,288 rounds)".into(),
+            mime_type: format!("application/x-7z-compressed (v{}.{})", seven_z.version_major, seven_z.version_minor),
+            is_encrypted: seven_z.is_encrypted,
+            lock_type: seven_z.summary,
             entropy,
             magic_header: "37 7A BC AF 27 1C (7-Zip)".into(),
-            recommended_attack: "Leveled Wordlist + GPU Best64 Rules ($7z$ 524k iter)".into(),
-            recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
-            ready_to_crack: true,
+            recommended_attack,
+            recommended_engine: if gpu_available && seven_z.is_encrypted { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
+            ready_to_crack: seven_z.is_encrypted,
         };
     }
 
-    // ── 7. KeePass 1.x & 2.x Databases ────────────────────────────────────────
-    if slice.starts_with(&[0x03, 0xD9, 0xA2, 0x9A]) || slice.starts_with(&[0x9A, 0xA2, 0xD9, 0x03]) || filename.ends_with(".kdbx") || filename.ends_with(".kdb") {
+    // ── 7. KeePass Databases via In-Process Extractor ─────────────────────────
+    if let Some(kdbx) = KeePassInspection::inspect(path) {
         return FileAnalysis {
             file_path: path.to_string_lossy().to_string(),
             file_size: size_bytes,
-            mime_type: "application/x-keepass-database".into(),
+            mime_type: format!("application/x-keepass-database ({})", kdbx.format_version),
             is_encrypted: true,
-            lock_type: "KeePass 2.x KDBX (AES-256 / Argon2d / ChaCha20)".into(),
+            lock_type: kdbx.summary,
             entropy,
             magic_header: "03 D9 A2 9A (KeePass)".into(),
-            recommended_attack: "Multi-Corpus Dictionary + Transform Seed Rules".into(),
+            recommended_attack: format!("Dictionary + Rules ({} / {})", kdbx.cipher_name, kdbx.kdf_name),
             recommended_engine: if gpu_available { ComputeEngine::Hybrid } else { ComputeEngine::CpuSimd },
             ready_to_crack: true,
         };
@@ -1872,22 +1839,26 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
     }
 
     // ── 10. Raw Hashes & Universal Octet Streams ─────────────────────────────
-    let (mime, lock, is_enc, rec_att) = if slice.len() == 32 && slice.iter().all(|b| b.is_ascii_hexdigit()) {
-        ("text/plain (MD5 / NTLM Hash Digest)", "Raw MD5 / NTLM Hash (128-bit)", true, "High-Speed GPU Warp Brute-Force / Rules")
-    } else if slice.len() == 64 && slice.iter().all(|b| b.is_ascii_hexdigit()) {
-        ("text/plain (SHA-256 Hash Digest)", "Raw SHA-256 Hash (256-bit)", true, "GPU Stream Compute (SHA256)")
-    } else if slice.starts_with(b"$2a$") || slice.starts_with(b"$2b$") || slice.starts_with(b"$2y$") {
-        ("text/plain (Bcrypt Password Hash)", "Bcrypt ($2b$ Cost 12 Blowfish KDF)", true, "Hybrid CPU+GPU Multi-Core Recovery")
-    } else if slice.starts_with(b"$argon2id$") || slice.starts_with(b"$argon2i$") {
-        ("text/plain (Argon2 Memory-Hard Hash)", "Argon2id (RFC 9106 Memory-Hard)", true, "Hybrid Allocation (Ryzen 5600 + RTX 4060)")
-    } else if slice.starts_with(b"$krb5tgs$") || slice.starts_with(b"$krb5asrep$") {
-        ("text/plain (Kerberos 5 Ticket)", "Kerberos 5 TGS/AS-REP (etype 23 RC4-HMAC)", true, "GPU Wordlist + Rule Permutation Engine")
-    } else if entropy > 7.75 {
+    if let Some(hash_info) = HashClassification::classify(slice) {
+        return FileAnalysis {
+            file_path: path.to_string_lossy().to_string(),
+            file_size: size_bytes,
+            mime_type: "text/plain (Cryptographic Hash)".into(),
+            is_encrypted: true,
+            lock_type: hash_info.display_name,
+            entropy,
+            magic_header: hex_header,
+            recommended_attack: hash_info.recommended_engine_desc.into(),
+            recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
+            ready_to_crack: true,
+        };
+    }
+
+    let (mime, lock, is_enc, rec_att) = if entropy > 7.75 {
         ("application/octet-stream (High-Entropy Binary)", "Cryptographic Vault (High Entropy Payload)", true, "Vectorized SIMD / GPU Warp Brute-Force")
     } else {
         ("application/octet-stream (Plaintext Binary / Data)", "Unencrypted Binary Data (No Cryptographic Header)", false, "File is not an encrypted target")
     };
-
     FileAnalysis {
         file_path: path.to_string_lossy().to_string(),
         file_size: size_bytes,

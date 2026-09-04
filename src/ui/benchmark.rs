@@ -114,13 +114,20 @@ fn render_bar_chart(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let group = BarGroup::default().bars(&bars);
 
+    let max_val = app
+        .bench_results
+        .iter()
+        .map(|r| r.multi_mb)
+        .max()
+        .unwrap_or(2000)
+        .max(100);
+
     let chart = BarChart::default()
         .data(group)
         .bar_width(bar_width)
         .bar_gap(1)
-        .max(2000)
+        .max(max_val)
         .direction(ratatui::layout::Direction::Vertical);
-
     frame.render_widget(chart, inner);
 }
 

@@ -26,8 +26,13 @@ pub fn render_sessions(frame: &mut Frame, area: Rect, app: &mut AppState) {
     ])
     .split(rows[0]);
 
-    render_sessions_table(frame, split[0], app);
-    render_inspector(frame, split[1], app);
+    if app.potfile_view {
+        render_potfile_table(frame, split[0], app);
+        render_potfile_inspector(frame, split[1], app);
+    } else {
+        render_sessions_table(frame, split[0], app);
+        render_inspector(frame, split[1], app);
+    }
     render_search_bar(frame, rows[1], app);
 }
 
@@ -226,7 +231,7 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &AppState) {
                 ),
                 Span::styled(" / ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
                 Span::styled(
-                    "  to filter by ID, path, cipher, or status...",
+                    "  to filter sessions or potfile records...",
                     theme::style_subtext(),
                 ),
             ]),
@@ -246,8 +251,7 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &AppState) {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max { return s.to_string(); }
-    format!("{}…", &s[..max.saturating_sub(1)])
+    crate::ui::truncate(s, max)
 }
 
 fn fmt_num(n: u64) -> String {
@@ -258,4 +262,131 @@ fn fmt_num(n: u64) -> String {
         out.push(c);
     }
     out.chars().rev().collect()
+}
+
+fn render_potfile_table(frame: &mut Frame, area: Rect, app: &mut AppState) {
+    let filtered = app.filtered_potfile();
+    let sel = app.potfile_selected.min(filtered.len().saturating_sub(1));
+
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::raw("─ ◈ "),
+            Span::styled("GLOBAL PERSISTENT POTFILE", theme::style_title()),
+            Span::styled(format!("  {} cached passwords  ", filtered.len()), theme::style_subtext()),
+            Span::styled("[P: Switch to Sessions]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        ]))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Green));
+
+    let header = Row::new(vec![
+        Cell::from("  Target / Signature").style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
+        Cell::from("Plaintext Password").style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
+        Cell::from("Algorithm").style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
+        Cell::from("Cracked Timestamp").style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
+    ]);
+
+    let rows: Vec<Row> = filtered
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let is_sel = i == sel;
+            let prefix = if is_sel { "▶ " } else { "  " };
+
+            let target_str = truncate(&r.hash_or_sig, 30);
+
+            Row::new(vec![
+                Cell::from(format!("{}{}", prefix, target_str)).style(if is_sel {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else {
+                    theme::style_subtext()
+                }),
+                Cell::from(r.plaintext.as_str()).style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Cell::from(r.algo.as_str()).style(Style::default().fg(Color::Magenta)),
+                Cell::from(r.cracked_at.as_str()).style(theme::style_dim()),
+            ])
+            .style(if is_sel {
+                Style::default().bg(Color::Indexed(237)).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            })
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Percentage(40),
+        Constraint::Percentage(25),
+        Constraint::Percentage(18),
+        Constraint::Percentage(17),
+    ];
+
+    let mut ts = TableState::default().with_selected(Some(sel));
+    let table = Table::new(rows, widths)
+        .block(block)
+        .header(header)
+        .column_spacing(1)
+        .row_highlight_style(Style::default().bg(Color::Indexed(237)));
+
+    frame.render_stateful_widget(table, area, &mut ts);
+}
+
+fn render_potfile_inspector(frame: &mut Frame, area: Rect, app: &AppState) {
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::raw("─ ◈ "),
+            Span::styled("POTFILE ENTRY DETAILS", theme::style_title()),
+        ]))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Green));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let filtered = app.filtered_potfile();
+    let sel = app.potfile_selected.min(filtered.len().saturating_sub(1));
+
+    if filtered.is_empty() {
+        let p = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(vec![Span::styled("  No potfile records cached yet.", theme::style_subtext())]),
+            Line::from(""),
+            Line::from(vec![Span::styled("  Cracked hashes and containers are", theme::style_dim())]),
+            Line::from(vec![Span::styled("  automatically saved here for instant", theme::style_dim())]),
+            Line::from(vec![Span::styled("  lookup on future recovery runs.", theme::style_dim())]),
+        ]);
+        frame.render_widget(p, inner);
+        return;
+    }
+
+    let r = filtered[sel];
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Target / Sig  : ", theme::style_subtext()),
+            Span::styled(truncate(&r.hash_or_sig, inner.width.saturating_sub(18) as usize), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Plaintext Pass: ", theme::style_subtext()),
+            Span::styled(&r.plaintext, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Password Len  : ", theme::style_subtext()),
+            Span::styled(format!("{} characters", r.plaintext.len()), Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Algorithm     : ", theme::style_subtext()),
+            Span::styled(&r.algo, Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Cracked Date  : ", theme::style_subtext()),
+            Span::styled(&r.cracked_at, theme::style_dim()),
+        ]),
+        Line::from(vec![
+            Span::styled("  Cache Status  : ", theme::style_subtext()),
+            Span::styled("✨ PERSISTED IN POTFILE (0.001 ms)", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        ]),
+    ];
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }

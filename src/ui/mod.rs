@@ -61,6 +61,18 @@ pub mod theme {
     }
 }
 
+/// Safely truncate string `s` to at most `max` characters without splitting multibyte UTF-8 codepoints.
+pub fn truncate(s: &str, max: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max {
+        return s.to_string();
+    }
+    let target = max.saturating_sub(1);
+    let mut out: String = s.chars().take(target).collect();
+    out.push('…');
+    out
+}
+
 /// Top-level render: splash screen or header + content + footer. Zero dead space.
 pub fn render(frame: &mut Frame, app: &mut AppState) {
     let area = frame.area();

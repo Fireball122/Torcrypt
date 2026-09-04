@@ -21,6 +21,10 @@ pub fn render_analyze(frame: &mut Frame, area: Rect, app: &mut AppState) {
 
     render_file_explorer(frame, cols[0], app);
     render_smart_inspector(frame, cols[1], app);
+
+    if app.mask_modal_open {
+        render_mask_modal(frame, area, app);
+    }
 }
 
 // ─── LEFT COLUMN: File Explorer Table ─────────────────────────────────────────
@@ -52,12 +56,20 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
 
     frame.render_widget(path_p, rows[0]);
 
+    let mut title_spans = vec![
+        Span::raw("─ ◈ "),
+        Span::styled("FILE SELECTOR", theme::style_title()),
+        Span::styled(format!("  ({} items) ", app.dir_entries.len()), theme::style_subtext()),
+    ];
+    if let Some(wl) = &app.custom_wordlist {
+        let wl_name = wl.file_name().unwrap_or_default().to_string_lossy();
+        title_spans.push(Span::styled(
+            format!(" [WL: {}] ", wl_name),
+            Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+        ));
+    }
     let table_block = Block::default()
-        .title(Line::from(vec![
-            Span::raw("─ ◈ "),
-            Span::styled("FILE SELECTOR", theme::style_title()),
-            Span::styled(format!("  ({} items) ", app.dir_entries.len()), theme::style_subtext()),
-        ]))
+        .title(Line::from(title_spans))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(theme::style_border());
@@ -322,10 +334,34 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
             rec_badge,
         ]));
         strat_lines.push(Line::from(vec![
-            Span::styled(format!("      ↳ Keyspace: {} │ {}", opt.keyspace_name, opt.desc), desc_style),
+            Span::styled(format!("      ↳ Feasibility: {} │ Keyspace: {} │ {}", opt.feasibility, opt.keyspace_name, opt.desc), desc_style),
         ]));
         strat_lines.push(Line::from(vec![Span::raw("")]));
     }
+
+    // Wordlist status notice — warn honestly when only the embedded 600-entry list is available.
+    use crate::engine::crackers::generator::CandidateIterator;
+    let wl_line = if app.custom_wordlist.is_some() {
+        let wl_name = app.custom_wordlist.as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        Line::from(vec![
+            Span::styled("  ◈ Wordlist: ", theme::style_subtext()),
+            Span::styled(format!("Custom → {}", wl_name), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        ])
+    } else if let Some(path) = CandidateIterator::system_wordlist_path() {
+        Line::from(vec![
+            Span::styled("  ◈ Wordlist: ", theme::style_subtext()),
+            Span::styled(format!("System → {}", path), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("  ⚠ Wordlist: ", Style::default().fg(Color::Yellow)),
+            Span::styled("Embedded 600-entry list only — install rockyou.txt or press [W] to load a custom wordlist for real-world coverage.", Style::default().fg(Color::Yellow)),
+        ])
+    };
+    strat_lines.push(wl_line);
 
     let sub_sections = Layout::vertical([
         Constraint::Min(0),     // Strategies
@@ -346,23 +382,30 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         "SELECTED STRATEGY".into()
     };
 
-    let launch_p = Paragraph::new(Line::from(vec![
-        Span::styled(" 🚀 PRESS ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-        Span::styled(" [A] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::styled(" OR ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-        Span::styled(" [SPACE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::styled(format!(" TO LAUNCH {} PIPELINE ", active_label), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-    ]))
-    .alignment(ratatui::layout::Alignment::Center)
-    .block(launch_block);
+    let checkpoint = app.session_db.as_ref().and_then(|db| db.get_latest_checkpoint(&app.analysis.file_path));
+    let mut spans = vec![
+        Span::styled(" [A / Space] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" Launch {} ", active_label), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+    ];
+    if let Some((ses_id, offset)) = checkpoint {
+        spans.push(Span::styled(" │ ", theme::style_dim()));
+        spans.push(Span::styled(" [R] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(format!(" Resume {} @ #{} ", ses_id, fmt_number(offset)), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+    }
+    spans.push(Span::styled(" │ ", theme::style_dim()));
+    spans.push(Span::styled(" [M] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)));
+    spans.push(Span::styled(" Custom Mask ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+
+    let launch_p = Paragraph::new(Line::from(spans))
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(launch_block);
 
     frame.render_widget(launch_p, sub_sections[1]);
 }
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max { return s.to_string(); }
-    format!("{}…", &s[..max.saturating_sub(1)])
+    crate::ui::truncate(s, max)
 }
 
 fn fmt_file_size(bytes: u64) -> String {
@@ -375,4 +418,121 @@ fn fmt_file_size(bytes: u64) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+fn render_mask_modal(frame: &mut Frame, area: Rect, app: &AppState) {
+    let popup_area = centered_rect(65, 45, area);
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let mask = crate::engine::crackers::generator::CompiledMask::parse(&app.mask_input);
+    let keyspace_str = fmt_number(mask.total);
+
+    let est_time_secs = (mask.total as f64) / (if app.sys_gpu_available { 40_000.0 } else { 4_000.0 });
+    let est_time_str = if est_time_secs < 1.0 {
+        "< 1 second".to_string()
+    } else if est_time_secs < 60.0 {
+        format!("{:.1} seconds", est_time_secs)
+    } else if est_time_secs < 3600.0 {
+        format!("{:.1} minutes", est_time_secs / 60.0)
+    } else {
+        format!("{:.1} hours", est_time_secs / 3600.0)
+    };
+
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::raw("─ ◈ "),
+            Span::styled("CUSTOM RECOVERY MASK COMPILER", theme::style_title()),
+            Span::raw(" "),
+        ]))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let rows = Layout::vertical([
+        Constraint::Length(3), // Input box
+        Constraint::Length(2), // Keyspace & time stats
+        Constraint::Length(4), // Token legend
+        Constraint::Min(0),    // Action hints
+    ])
+    .split(inner);
+
+    let input_p = Paragraph::new(Line::from(vec![
+        Span::styled(" Template: ", theme::style_subtext()),
+        Span::styled(&app.mask_input, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled("█", Style::default().fg(Color::Cyan)),
+    ]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Cyan)),
+    );
+    frame.render_widget(input_p, rows[0]);
+
+    let stats_p = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled(" Keyspace: ", theme::style_subtext()),
+            Span::styled(format!("{} candidates", keyspace_str), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled("  │ Est. Time: ", theme::style_subtext()),
+            Span::styled(est_time_str, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]),
+    ]);
+    frame.render_widget(stats_p, rows[1]);
+
+    let legend_p = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled(" ?d: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("0-9 (10)  ", theme::style_subtext()),
+            Span::styled("?l: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("a-z (26)  ", theme::style_subtext()),
+            Span::styled("?u: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("A-Z (26)  ", theme::style_subtext()),
+        ]),
+        Line::from(vec![
+            Span::styled(" ?s: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("Symbols (33)  ", theme::style_subtext()),
+            Span::styled("?a: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("All ASCII (95)  ", theme::style_subtext()),
+            Span::styled("Literal: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("e.g. Pass?d?d!", theme::style_subtext()),
+        ]),
+    ]);
+    frame.render_widget(legend_p, rows[2]);
+
+    let actions = Paragraph::new(Line::from(vec![
+        Span::styled(" [Enter] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(" Launch Mask Attack    ", theme::style_title()),
+        Span::styled(" [Esc] ", Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::styled(" Cancel", theme::style_subtext()),
+    ]));
+    frame.render_widget(actions, rows[3]);
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ])
+    .split(r);
+
+    Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(popup_layout[1])[1]
+}
+
+fn fmt_number(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 { out.push(','); }
+        out.push(c);
+    }
+    out.chars().rev().collect()
 }

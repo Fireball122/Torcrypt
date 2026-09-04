@@ -39,7 +39,15 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
             spans.push(label("Back"));
             spans.push(key("Tab"));
             spans.push(label("Tier"));
+            spans.push(key("W"));
+            spans.push(label("Wordlist"));
+            spans.push(key("E"));
+            spans.push(label("Export Audit"));
             if app.analysis.ready_to_crack {
+                spans.push(key("M"));
+                spans.push(label("Mask"));
+                spans.push(key("R"));
+                spans.push(label("Resume"));
                 spans.push(key("A / Space"));
                 spans.push(label("Launch"));
             }
@@ -68,10 +76,14 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
             spans.push(label("Select"));
         }
         Tab::Sessions => {
+            spans.push(key("P"));
+            spans.push(label("Potfile / Sessions"));
             spans.push(key("/"));
             spans.push(label("Search"));
             spans.push(key("J/K"));
             spans.push(label("Navigate"));
+            spans.push(key("E"));
+            spans.push(label("Export Audit"));
         }
         Tab::System => {}
     }

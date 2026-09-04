@@ -122,7 +122,15 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         Line::from(vec![
             Span::styled("  Throughput    : ", theme::style_subtext()),
             Span::styled(
-                if speed >= 1000.0 { format!("{:.1} MH/s (Accelerated)", speed / 1.0) } else { format!("{:.1} MB/s", speed) },
+                if speed >= 1_000_000.0 {
+                    format!("{:.2} Mc/s (Accelerated)", speed / 1_000_000.0)
+                } else if speed >= 1_000.0 {
+                    format!("{:.1} Kc/s", speed / 1_000.0)
+                } else if speed > 0.0 {
+                    format!("{:.0} c/s", speed)
+                } else {
+                    "—".into()
+                },
                 if speed > 0.0 { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() },
             ),
         ]),
@@ -469,6 +477,5 @@ fn fmt_duration(secs: f64) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max { return s.to_string(); }
-    format!("{}…", &s[..max.saturating_sub(1)])
+    crate::ui::truncate(s, max)
 }

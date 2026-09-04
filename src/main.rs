@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_variables)]
 // main.rs — TORCRYPT TUI Entry Point: Crossterm raw mode + 30 FPS event loop with Interactive Log Scrolling
 mod app;
+pub mod engine;
 mod ui;
 
 use std::io;
@@ -41,8 +42,12 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
     let mut last_tick = Instant::now();
 
     loop {
-        term.draw(|frame| ui::render(frame, &mut app))?;
+        // Drain all pending telemetry events from the background decryption worker
+        while let Ok(event) = app.engine.try_recv() {
+            app.handle_telemetry(event);
+        }
 
+        term.draw(|frame| ui::render(frame, &mut app))?;
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)? {
             match event::read()? {
@@ -58,10 +63,10 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                     if app.in_splash {
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(()),
-                            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
-                                if app.splash_start_time.elapsed().as_millis() >= 1000 {
-                                    app.in_splash = false;
-                                }
+                            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ')
+                                if app.splash_start_time.elapsed().as_millis() >= 1000 =>
+                            {
+                                app.in_splash = false;
                             }
                             _ => {}
                         }
