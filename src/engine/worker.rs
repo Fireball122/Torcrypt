@@ -197,10 +197,10 @@ impl DecryptionWorker {
     }
 
     fn start_attack(&mut self, req: AttackRequest) {
-        self.target_path     = req.target_path;
-        self.cipher_suite    = req.cipher_suite;
+        self.target_path     = req.target_path.clone();
+        self.cipher_suite    = req.cipher_suite.clone();
         self.active_engine   = req.active_engine;
-        self.active_strategy = req.strategy_title;
+        self.active_strategy = req.strategy_title.clone();
         self.items_done      = 0;
         self.items_total     = req.items_total;
         self.elapsed_secs    = 0.0;
@@ -217,186 +217,81 @@ impl DecryptionWorker {
         }
 
         let target_p = Path::new(&self.target_path);
-
-        // 1. Attempt to load native pure-Rust cracker
         let real_cracker = ActiveCracker::load_target(target_p);
+        let has_native = real_cracker.is_some();
 
-        if let Some(cracker) = real_cracker {
-            let cipher = cracker.cipher_name();
+        // Resolve effective backend (Hashcat, John, fcrackzip, Native) based on preference & capabilities
+        let effective_backend = self.backend_catalog.resolve_backend(
+            req.backend_selection,
+            target_p,
+            &self.cipher_suite,
+            has_native,
+        );
 
-            // Configure candidate generator
-            let generator = if let Some(custom_wl) = &req.wordlist_path {
-                let p = Path::new(custom_wl);
-                if p.is_file() {
-                    let _ = self.tel_tx.send(TelemetryEvent::Log {
-                        level:   LogLevel::Lock,
-                        path:    custom_wl.clone(),
-                        message: format!("Custom Operator Wordlist Engaged: {}", custom_wl),
-                    });
-                    CandidateIterator::new_wordlist(p.to_path_buf())
-                        .unwrap_or_else(|| {
-                            let _ = self.tel_tx.send(TelemetryEvent::Log {
-                                level:   LogLevel::Err,
-                                path:    custom_wl.clone(),
-                                message: format!("Wordlist unreadable: {} — falling back to built-in corpus", custom_wl),
-                            });
-                            CandidateIterator::new_common()
-                        })
-                } else {
-                    let _ = self.tel_tx.send(TelemetryEvent::Log {
-                        level:   LogLevel::Err,
-                        path:    custom_wl.clone(),
-                        message: format!("Wordlist not found: {} — falling back to built-in corpus", custom_wl),
-                    });
-                    CandidateIterator::new_common()
-                }
-            } else if req.strategy_id.starts_with("mask_pattern:") {
-                let pat = &req.strategy_id["mask_pattern:".len()..];
-                CandidateIterator::new_mask(pat)
-            } else if req.strategy_id.contains("hybrid_mask") {
-                CandidateIterator::new_mask("?u?l?l?l?d?d")
-            } else if req.strategy_id.contains("mask") || req.strategy_id.contains("pin") {
-                let digits = if req.strategy_id.contains("10d") {
-                    10
-                } else if req.strategy_id.contains("8d") {
-                    8
-                } else if req.strategy_id.contains("7d") {
-                    7
-                } else if req.strategy_id.contains("6d") {
-                    6
-                } else if req.strategy_id.contains("5d") {
-                    5
-                } else if req.strategy_id.contains("4d") {
-                    4
-                } else {
-                    6
-                };
-                CandidateIterator::new_numeric_mask(digits)
-            } else if req.strategy_id.contains("rules") || req.strategy_id.contains("mut") || req.strategy_id.contains("best64") {
-                let words: Vec<String> = crate::engine::crackers::generator::COMMON_PASSWORDS
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
-                CandidateIterator::new_best64(words)
-            } else if req.strategy_id.contains("combinator") {
-                let words: Vec<String> = crate::engine::crackers::generator::COMMON_PASSWORDS[..50]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
-                let suffixes: Vec<String> = (0..100).map(|i| format!("{:02}", i)).collect();
-                CandidateIterator::new_combinator(words, suffixes)
-            } else if req.strategy_id.contains("prod") || req.strategy_id.contains("full") {
-                // Search platform-standard locations; never assume a specific home directory
-                let wordlist_candidates = [
-                    "/usr/share/wordlists/rockyou.txt",
-                    "/usr/share/wordlists/passwords/rockyou.txt",
-                    "/opt/wordlists/rockyou.txt",
-                    "rockyou.txt",
-                    "wordlist.txt",
-                    "passwords.txt",
-                ];
-                let mut found_wl = None;
-                for &wl in &wordlist_candidates {
-                    let p = Path::new(wl);
-                    if p.is_file() {
-                        found_wl = CandidateIterator::new_wordlist(p.to_path_buf());
-                        if found_wl.is_some() {
-                            let _ = self.tel_tx.send(TelemetryEvent::Log {
-                                level:   LogLevel::Info,
-                                path:    wl.to_string(),
-                                message: format!("External Wordlist Loaded: {}", wl),
-                            });
-                            break;
-                        }
+        if effective_backend.is_external() {
+            let bin_path = match effective_backend {
+                BackendType::Hashcat   => self.backend_catalog.hashcat.as_deref(),
+                BackendType::John      => self.backend_catalog.john.as_deref(),
+                BackendType::Fcrackzip => self.backend_catalog.fcrackzip.as_deref(),
+                _                      => None,
+            };
+
+            if let Some(bin) = bin_path {
+                let mut gen = CandidateIterator::new_common();
+                let cand_sample = if req.wordlist_path.is_some() { None } else { Some(gen.next_batch(500)) };
+                let extractor_bin = self.backend_catalog.find_extractor_for(target_p);
+                let wl_arg = req.wordlist_path.as_deref().map(Path::new);
+
+                match BackendJob::launch(
+                    effective_backend,
+                    bin,
+                    target_p,
+                    extractor_bin,
+                    wl_arg,
+                    cand_sample,
+                    req.cipher_desc.as_deref(),
+                    Some(&req.strategy_id),
+                ) {
+                    Ok(job) => {
+                        self.active_backend = Some(job);
+                        self.active_cracker = None;
+                        self.candidate_iter = None;
+                        self.crack_pool.take();
+                        let _ = self.tel_tx.send(TelemetryEvent::Log {
+                            level:   LogLevel::Lock,
+                            path:    self.target_path.clone(),
+                            message: format!(
+                                "⚡ GUI Dispatch to {}: {}",
+                                effective_backend.display_name(),
+                                bin.display()
+                            ),
+                        });
                     }
-                }
-                if found_wl.is_none() {
-                    let _ = self.tel_tx.send(TelemetryEvent::Log {
-                        level:   LogLevel::Warn,
-                        path:    String::new(),
-                        message: "No system wordlist found — using built-in corpus. Install rockyou.txt to /usr/share/wordlists/".into(),
-                    });
-                }
-                found_wl.unwrap_or_else(CandidateIterator::new_common)
-            } else {
-                CandidateIterator::new_common()
-            };
-            let mut generator = generator;
-            if req.start_offset > 0 {
-                generator.skip_candidates(req.start_offset);
-                self.items_done = req.start_offset;
-            }
-            if let Some(total) = generator.total_candidates() {
-                self.items_total = total;
-            }
-            let initial_per_thread = match &cracker {
-                ActiveCracker::SevenZip(_) => 1,
-                ActiveCracker::Rar5(_) => 1,
-                ActiveCracker::KeePass(_) => 2,
-                ActiveCracker::WinZipAes(_) => 5,
-                ActiveCracker::Pdf(_) => 50,
-                _ => 250,
-            };
-            self.current_batch_size = (initial_per_thread * self.thread_count as usize).max(1);
-            self.candidate_iter = Some(generator);
-            // Spawn persistent thread pool for this cracker — replaces per-tick thread::scope.
-            self.crack_pool     = Some(CrackPool::spawn(&cracker, self.thread_count as usize));
-            self.active_cracker = Some(cracker);
-            self.active_backend = None;
-            let _ = self.tel_tx.send(TelemetryEvent::Log {
-                level:   LogLevel::Lock,
-                path:    self.target_path.clone(),
-                message: format!("Native In-Process Verification Engine Engaged: {}", cipher),
-            });
-        } else {
-            // 2. Target not supported natively. Check for external backend (Hashcat / John)
-            self.active_cracker = None;
-            self.candidate_iter = None;
-
-            if let Some(backend_type) = self.backend_catalog.select_backend(target_p, &self.cipher_suite) {
-                let bin_path = match backend_type {
-                    BackendType::Hashcat => self.backend_catalog.hashcat.as_deref(),
-                    BackendType::John    => self.backend_catalog.john.as_deref(),
-                    BackendType::None    => None,
-                };
-
-                if let Some(bin) = bin_path {
-                    let mut gen = CandidateIterator::new_common();
-                    let cand_sample = if req.wordlist_path.is_some() { None } else { Some(gen.next_batch(500)) };
-                    let extractor_bin = self.backend_catalog.find_extractor_for(target_p);
-                    let wl_arg = req.wordlist_path.as_deref().map(Path::new);
-
-            match BackendJob::launch(backend_type, bin, target_p, extractor_bin, wl_arg, cand_sample, req.cipher_desc.as_deref()) {
-                        Ok(job) => {
-                            self.active_backend = Some(job);
-                            let _ = self.tel_tx.send(TelemetryEvent::Log {
-                                level:   LogLevel::Info,
-                                path:    self.target_path.clone(),
-                                message: format!(
-                                    "External Backend Orchestrator Dispatched: {} ({})",
-                                    backend_type.display_name(),
-                                    bin.display()
-                                ),
-                            });
-                        }
-                        Err(err) => {
-                            let _ = self.tel_tx.send(TelemetryEvent::Log {
-                                level:   LogLevel::Err,
-                                path:    self.target_path.clone(),
-                                message: format!("Failed to spawn external backend: {}", err),
-                            });
+                    Err(err) => {
+                        let _ = self.tel_tx.send(TelemetryEvent::Log {
+                            level:   LogLevel::Warn,
+                            path:    self.target_path.clone(),
+                            message: format!("External backend launch failed: {} — falling back to Native engine", err),
+                        });
+                        if let Some(cracker) = real_cracker {
+                            self.engage_native_cracker(cracker, &req);
+                        } else {
                             self.mark_unsupported();
                             return;
                         }
                     }
-                } else {
-                    self.mark_unsupported();
-                    return;
                 }
+            } else if let Some(cracker) = real_cracker {
+                self.engage_native_cracker(cracker, &req);
             } else {
                 self.mark_unsupported();
                 return;
             }
+        } else if let Some(cracker) = real_cracker {
+            self.engage_native_cracker(cracker, &req);
+        } else {
+            self.mark_unsupported();
+            return;
         }
 
         self.eta_secs = (self.items_total as f64 / 45_000.0).max(0.5);
@@ -466,12 +361,139 @@ impl DecryptionWorker {
 
         let _ = self.tel_tx.send(TelemetryEvent::Log {
             level:   LogLevel::Info,
+
             path:    String::new(),
             message: format!(
                 "Compute Engine Engaged: {} │ Keyspace: {}",
                 self.active_engine.display_name(),
                 req.keyspace_name
             ),
+        });
+    }
+    fn engage_native_cracker(&mut self, cracker: ActiveCracker, req: &AttackRequest) {
+        let cipher = cracker.cipher_name();
+
+        let generator = if let Some(custom_wl) = &req.wordlist_path {
+            let p = Path::new(custom_wl);
+            if p.is_file() {
+                let _ = self.tel_tx.send(TelemetryEvent::Log {
+                    level:   LogLevel::Lock,
+                    path:    custom_wl.clone(),
+                    message: format!("Custom Operator Wordlist Engaged: {}", custom_wl),
+                });
+                CandidateIterator::new_wordlist(p.to_path_buf())
+                    .unwrap_or_else(|| {
+                        let _ = self.tel_tx.send(TelemetryEvent::Log {
+                            level:   LogLevel::Err,
+                            path:    custom_wl.clone(),
+                            message: format!("Wordlist unreadable: {} — falling back to built-in corpus", custom_wl),
+                        });
+                        CandidateIterator::new_common()
+                    })
+            } else {
+                let _ = self.tel_tx.send(TelemetryEvent::Log {
+                    level:   LogLevel::Err,
+                    path:    custom_wl.clone(),
+                    message: format!("Wordlist not found: {} — falling back to built-in corpus", custom_wl),
+                });
+                CandidateIterator::new_common()
+            }
+        } else if req.strategy_id.starts_with("mask_pattern:") {
+            let pat = &req.strategy_id["mask_pattern:".len()..];
+            CandidateIterator::new_mask(pat)
+        } else if req.strategy_id.contains("hybrid_mask") {
+            CandidateIterator::new_mask("?u?l?l?l?d?d")
+        } else if req.strategy_id.contains("mask") || req.strategy_id.contains("pin") {
+            let digits = if req.strategy_id.contains("10d") {
+                10
+            } else if req.strategy_id.contains("8d") {
+                8
+            } else if req.strategy_id.contains("7d") {
+                7
+            } else if req.strategy_id.contains("6d") {
+                6
+            } else if req.strategy_id.contains("5d") {
+                5
+            } else if req.strategy_id.contains("4d") {
+                4
+            } else {
+                6
+            };
+            CandidateIterator::new_numeric_mask(digits)
+        } else if req.strategy_id.contains("rules") || req.strategy_id.contains("mut") || req.strategy_id.contains("best64") {
+            let words: Vec<String> = crate::engine::crackers::generator::COMMON_PASSWORDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            CandidateIterator::new_best64(words)
+        } else if req.strategy_id.contains("combinator") {
+            let words: Vec<String> = crate::engine::crackers::generator::COMMON_PASSWORDS[..50]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            let suffixes: Vec<String> = (0..100).map(|i| format!("{:02}", i)).collect();
+            CandidateIterator::new_combinator(words, suffixes)
+        } else if req.strategy_id.contains("prod") || req.strategy_id.contains("full") {
+            let wordlist_candidates = [
+                "/usr/share/wordlists/rockyou.txt",
+                "/usr/share/wordlists/passwords/rockyou.txt",
+                "/opt/wordlists/rockyou.txt",
+                "rockyou.txt",
+                "wordlist.txt",
+                "passwords.txt",
+            ];
+            let mut found_wl = None;
+            for &wl in &wordlist_candidates {
+                let p = Path::new(wl);
+                if p.is_file() {
+                    found_wl = CandidateIterator::new_wordlist(p.to_path_buf());
+                    if found_wl.is_some() {
+                        let _ = self.tel_tx.send(TelemetryEvent::Log {
+                            level:   LogLevel::Info,
+                            path:    wl.to_string(),
+                            message: format!("External Wordlist Loaded: {}", wl),
+                        });
+                        break;
+                    }
+                }
+            }
+            if found_wl.is_none() {
+                let _ = self.tel_tx.send(TelemetryEvent::Log {
+                    level:   LogLevel::Warn,
+                    path:    String::new(),
+                    message: "No system wordlist found — using built-in corpus. Install rockyou.txt to /usr/share/wordlists/".into(),
+                });
+            }
+            found_wl.unwrap_or_else(CandidateIterator::new_common)
+        } else {
+            CandidateIterator::new_common()
+        };
+
+        let mut generator = generator;
+        if req.start_offset > 0 {
+            generator.skip_candidates(req.start_offset);
+            self.items_done = req.start_offset;
+        }
+        if let Some(total) = generator.total_candidates() {
+            self.items_total = total;
+        }
+        let initial_per_thread = match &cracker {
+            ActiveCracker::SevenZip(_) => 1,
+            ActiveCracker::Rar5(_) => 1,
+            ActiveCracker::KeePass(_) => 2,
+            ActiveCracker::WinZipAes(_) => 5,
+            ActiveCracker::Pdf(_) => 50,
+            _ => 250,
+        };
+        self.current_batch_size = (initial_per_thread * self.thread_count as usize).max(1);
+        self.candidate_iter = Some(generator);
+        self.crack_pool     = Some(CrackPool::spawn(&cracker, self.thread_count as usize));
+        self.active_cracker = Some(cracker);
+        self.active_backend = None;
+        let _ = self.tel_tx.send(TelemetryEvent::Log {
+            level:   LogLevel::Lock,
+            path:    self.target_path.clone(),
+            message: format!("Native In-Process Verification Engine Engaged: {}", cipher),
         });
     }
 

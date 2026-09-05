@@ -7,16 +7,76 @@ use std::path::{Path, PathBuf};
 pub enum BackendType {
     Hashcat,
     John,
+    Fcrackzip,
+    Native,
     None,
 }
 
 impl BackendType {
     pub fn display_name(&self) -> &'static str {
         match self {
-            BackendType::Hashcat => "Hashcat (GPU/OpenCL Accelerator)",
-            BackendType::John    => "John the Ripper (Multi-Core SIMD/OpenMP)",
-            BackendType::None    => "None (Native Engine Only)",
+            BackendType::Hashcat   => "⚡ Hashcat (GPU/OpenCL Accelerator)",
+            BackendType::John      => "🔨 John the Ripper (Multi-Core SIMD)",
+            BackendType::Fcrackzip => "📦 fcrackzip (Optimized ZIP Cracker)",
+            BackendType::Native    => "🦀 Native In-Process Engine (AVX2 SIMD)",
+            BackendType::None      => "✖ Unsupported Format",
         }
+    }
+
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            BackendType::Hashcat   => "Hashcat",
+            BackendType::John      => "John",
+            BackendType::Fcrackzip => "fcrackzip",
+            BackendType::Native    => "Native",
+            BackendType::None      => "None",
+        }
+    }
+
+    pub fn is_external(&self) -> bool {
+        matches!(self, BackendType::Hashcat | BackendType::John | BackendType::Fcrackzip)
+    }
+}
+
+/// User preference for backend execution engine
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackendSelection {
+    #[default]
+    Auto,      // Automatically picks best available: Hashcat (GPU) -> John -> fcrackzip -> Native
+    Hashcat,   // Force Hashcat
+    John,      // Force John the Ripper
+    Fcrackzip, // Force fcrackzip
+    Native,    // Force built-in pure-Rust engine
+}
+
+impl BackendSelection {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            BackendSelection::Auto      => "AUTO (Best Detected Tool)",
+            BackendSelection::Hashcat   => "HASHCAT (GPU / OpenCL)",
+            BackendSelection::John      => "JOHN THE RIPPER (Multi-Core SIMD)",
+            BackendSelection::Fcrackzip => "FCRACKZIP (Dedicated ZIP)",
+            BackendSelection::Native    => "NATIVE ENGINE (Pure Rust AVX2)",
+        }
+    }
+
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            BackendSelection::Auto      => "Auto",
+            BackendSelection::Hashcat   => "Hashcat",
+            BackendSelection::John      => "John",
+            BackendSelection::Fcrackzip => "fcrackzip",
+            BackendSelection::Native    => "Native",
+        }
+    }
+
+    pub fn next(&self, catalog: &BackendCatalog) -> Self {
+        let options = catalog.available_selections();
+        if options.is_empty() {
+            return BackendSelection::Native;
+        }
+        let pos = options.iter().position(|&s| s == *self).unwrap_or(0);
+        options[(pos + 1) % options.len()]
     }
 }
 
@@ -24,6 +84,10 @@ impl BackendType {
 pub enum ExternalTool {
     Hashcat,
     John,
+    Fcrackzip,
+    Bkcrack,
+    Pdfcrack,
+    AircrackNg,
     Zip2John,
     Pdf2John,
     Rar2John,
@@ -32,11 +96,15 @@ pub enum ExternalTool {
 
 #[derive(Debug, Clone, Default)]
 pub struct BackendCatalog {
-    pub hashcat: Option<PathBuf>,
-    pub john: Option<PathBuf>,
-    pub zip2john: Option<PathBuf>,
-    pub pdf2john: Option<PathBuf>,
-    pub rar2john: Option<PathBuf>,
+    pub hashcat:       Option<PathBuf>,
+    pub john:          Option<PathBuf>,
+    pub fcrackzip:     Option<PathBuf>,
+    pub bkcrack:       Option<PathBuf>,
+    pub pdfcrack:      Option<PathBuf>,
+    pub aircrack_ng:   Option<PathBuf>,
+    pub zip2john:      Option<PathBuf>,
+    pub pdf2john:      Option<PathBuf>,
+    pub rar2john:      Option<PathBuf>,
     pub sevenzip2john: Option<PathBuf>,
 }
 
@@ -44,17 +112,21 @@ impl BackendCatalog {
     /// Probe the system PATH and standard binary directories for installed recovery backends.
     pub fn probe() -> Self {
         Self {
-            hashcat: find_executable("hashcat"),
-            john: find_executable("john"),
-            zip2john: find_executable("zip2john"),
-            pdf2john: find_executable("pdf2john"),
-            rar2john: find_executable("rar2john"),
+            hashcat:       find_executable("hashcat"),
+            john:          find_executable("john"),
+            fcrackzip:     find_executable("fcrackzip"),
+            bkcrack:       find_executable("bkcrack"),
+            pdfcrack:      find_executable("pdfcrack"),
+            aircrack_ng:   find_executable("aircrack-ng"),
+            zip2john:      find_executable("zip2john"),
+            pdf2john:      find_executable("pdf2john"),
+            rar2john:      find_executable("rar2john"),
             sevenzip2john: find_executable("7z2john").or_else(|| find_executable("7z2john.pl")),
         }
     }
 
     pub fn has_any(&self) -> bool {
-        self.hashcat.is_some() || self.john.is_some()
+        self.hashcat.is_some() || self.john.is_some() || self.fcrackzip.is_some()
     }
 
     pub fn has_hashcat(&self) -> bool {
@@ -65,8 +137,110 @@ impl BackendCatalog {
         self.john.is_some()
     }
 
-    /// Select the best external backend tool for a given target file and cipher suite.
-    pub fn select_backend(&self, target_path: &Path, cipher_suite: &str) -> Option<BackendType> {
+    pub fn has_fcrackzip(&self) -> bool {
+        self.fcrackzip.is_some()
+    }
+
+    pub fn available_selections(&self) -> Vec<BackendSelection> {
+        let mut selections = vec![BackendSelection::Auto];
+        if self.hashcat.is_some() {
+            selections.push(BackendSelection::Hashcat);
+        }
+        if self.john.is_some() {
+            selections.push(BackendSelection::John);
+        }
+        if self.fcrackzip.is_some() {
+            selections.push(BackendSelection::Fcrackzip);
+        }
+        selections.push(BackendSelection::Native);
+        selections
+    }
+
+    /// Resolve effective backend for a target considering user preference and target capabilities.
+    pub fn resolve_backend(
+        &self,
+        preference: BackendSelection,
+        target_path: &Path,
+        cipher_suite: &str,
+        has_native_cracker: bool,
+    ) -> BackendType {
+        match preference {
+            BackendSelection::Hashcat => {
+                if self.hashcat.is_some() && self.can_hashcat(target_path, cipher_suite) {
+                    BackendType::Hashcat
+                } else if has_native_cracker {
+                    BackendType::Native
+                } else if self.john.is_some() && self.can_john(target_path, cipher_suite) {
+                    BackendType::John
+                } else {
+                    BackendType::None
+                }
+            }
+            BackendSelection::John => {
+                if self.john.is_some() && self.can_john(target_path, cipher_suite) {
+                    BackendType::John
+                } else if has_native_cracker {
+                    BackendType::Native
+                } else if self.hashcat.is_some() && self.can_hashcat(target_path, cipher_suite) {
+                    BackendType::Hashcat
+                } else {
+                    BackendType::None
+                }
+            }
+            BackendSelection::Fcrackzip => {
+                if self.fcrackzip.is_some() && self.can_fcrackzip(target_path, cipher_suite) {
+                    BackendType::Fcrackzip
+                } else if has_native_cracker {
+                    BackendType::Native
+                } else {
+                    self.select_best_backend(target_path, cipher_suite, has_native_cracker)
+                }
+            }
+            BackendSelection::Native => {
+                if has_native_cracker {
+                    BackendType::Native
+                } else {
+                    self.select_best_backend(target_path, cipher_suite, has_native_cracker)
+                }
+            }
+            BackendSelection::Auto => {
+                self.select_best_backend(target_path, cipher_suite, has_native_cracker)
+            }
+        }
+    }
+
+    /// Automatically selects the best available tool for the target.
+    /// Priority: Hashcat (fastest / GPU) > John (broadest formats) > fcrackzip (for zip) > Native Rust > None
+    pub fn select_best_backend(
+        &self,
+        target_path: &Path,
+        cipher_suite: &str,
+        has_native_cracker: bool,
+    ) -> BackendType {
+        // 1. Hashcat is premier for GPU/OpenCL acceleration and raw hashes/containers
+        if self.hashcat.is_some() && self.can_hashcat(target_path, cipher_suite) {
+            return BackendType::Hashcat;
+        }
+
+        // 2. John the Ripper handles massive container formats and CPU SIMD
+        if self.john.is_some() && self.can_john(target_path, cipher_suite) {
+            return BackendType::John;
+        }
+
+        // 3. fcrackzip handles standard ZIP archives
+        if self.fcrackzip.is_some() && self.can_fcrackzip(target_path, cipher_suite) {
+            return BackendType::Fcrackzip;
+        }
+
+        // 4. Built-in Native Rust engine
+        if has_native_cracker {
+            return BackendType::Native;
+        }
+
+        BackendType::None
+    }
+
+    pub fn can_hashcat(&self, target_path: &Path, cipher_suite: &str) -> bool {
         let ext = target_path
             .extension()
             .and_then(|s| s.to_str())
@@ -74,44 +248,69 @@ impl BackendCatalog {
             .to_lowercase();
         let cipher_lower = cipher_suite.to_lowercase();
 
-        // 1. If Hashcat is installed, it is preferred for GPU-accelerated modes
-        if self.hashcat.is_some() {
-            if ext == "hash"
-                || ext == "txt"
-                || cipher_lower.contains("hash")
-                || cipher_lower.contains("md5")
-                || cipher_lower.contains("sha")
-                || cipher_lower.contains("ntlm")
-                || cipher_lower.contains("bcrypt")
-                || cipher_lower.contains("argon2")
-                || cipher_lower.contains("wpa")
-                || cipher_lower.contains("pmkid")
-                || cipher_lower.contains("aes")
-            {
-                return Some(BackendType::Hashcat);
-            }
-        }
+        hashcat_mode_for(cipher_suite).is_some()
+            || ext == "hash"
+            || ext == "txt"
+            || ext == "22000"
+            || ext == "hccapx"
+            || cipher_lower.contains("hash")
+            || cipher_lower.contains("md5")
+            || cipher_lower.contains("sha")
+            || cipher_lower.contains("ntlm")
+            || cipher_lower.contains("bcrypt")
+            || cipher_lower.contains("argon2")
+            || cipher_lower.contains("wpa")
+            || cipher_lower.contains("pmkid")
+            || cipher_lower.contains("zip")
+            || cipher_lower.contains("pdf")
+            || cipher_lower.contains("rar")
+            || cipher_lower.contains("7z")
+            || cipher_lower.contains("keepass")
+    }
 
-        // 2. John the Ripper handles container formats exceptionally well via its jumbo formats
-        if self.john.is_some() {
-            if ext == "zip"
-                || ext == "pdf"
-                || ext == "rar"
-                || ext == "7z"
-                || ext == "kdbx"
-                || ext == "hash"
-                || ext == "txt"
-            {
-                return Some(BackendType::John);
-            }
-        }
+    pub fn can_john(&self, target_path: &Path, cipher_suite: &str) -> bool {
+        let ext = target_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let cipher_lower = cipher_suite.to_lowercase();
 
-        // Fallback to Hashcat if John is missing but Hashcat is present
-        if self.hashcat.is_some() {
-            return Some(BackendType::Hashcat);
-        }
+        ext == "zip"
+            || ext == "pdf"
+            || ext == "rar"
+            || ext == "7z"
+            || ext == "kdbx"
+            || ext == "hash"
+            || ext == "txt"
+            || cipher_lower.contains("zip")
+            || cipher_lower.contains("pdf")
+            || cipher_lower.contains("rar")
+            || cipher_lower.contains("7-zip")
+            || cipher_lower.contains("keepass")
+            || cipher_lower.contains("md5")
+            || cipher_lower.contains("sha")
+            || cipher_lower.contains("ntlm")
+    }
 
-        None
+    pub fn can_fcrackzip(&self, target_path: &Path, cipher_suite: &str) -> bool {
+        let ext = target_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let cipher_lower = cipher_suite.to_lowercase();
+        ext == "zip" && (cipher_lower.contains("zipcrypto") || cipher_lower.contains("pkware") || !cipher_lower.contains("aes"))
+    }
+
+    /// Backwards-compatible legacy selector.
+    pub fn select_backend(&self, target_path: &Path, cipher_suite: &str) -> Option<BackendType> {
+        let b = self.select_best_backend(target_path, cipher_suite, false);
+        if b != BackendType::None {
+            Some(b)
+        } else {
+            None
+        }
     }
 
     /// Determine if an unsupported native target can be delegated to an external backend.
@@ -137,10 +336,13 @@ impl BackendCatalog {
     pub fn summary(&self) -> String {
         let mut tools = Vec::new();
         if let Some(p) = &self.hashcat {
-            tools.push(format!("hashcat ({})", p.display()));
+            tools.push(format!("⚡ Hashcat ({})", p.display()));
         }
         if let Some(p) = &self.john {
-            tools.push(format!("john ({})", p.display()));
+            tools.push(format!("🔨 John ({})", p.display()));
+        }
+        if let Some(p) = &self.fcrackzip {
+            tools.push(format!("📦 fcrackzip ({})", p.display()));
         }
         if let Some(p) = &self.zip2john {
             tools.push(format!("zip2john ({})", p.display()));
@@ -221,6 +423,15 @@ pub fn hashcat_mode_for(cipher_desc: &str) -> Option<u32> {
     }
     if d.contains("luks") {
         return Some(14600); // LUKS
+    }
+    if d.contains("zip") {
+        return Some(17200); // Default to PKZIP
+    }
+    if d.contains("pdf") {
+        return Some(10500); // Default to PDF 1.4-1.6
+    }
+    if d.contains("rar") {
+        return Some(12500); // Default to RAR3
     }
     None
 }

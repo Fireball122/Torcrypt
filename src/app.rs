@@ -14,7 +14,7 @@ use crate::engine::system_info::SystemMonitor;
 use crate::engine::feasibility::estimate_feasibility;
 use crate::engine::wordlist_profiler::WordlistProfile;
 use crate::engine::{benchmark_stage, run_full_benchmark, BenchResult, PotfileRecord};
-
+use crate::engine::backends::{BackendCatalog, BackendSelection};
 // ─── Tab Routing (5 Tabs) ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,6 +161,8 @@ pub struct AppState {
     pub custom_wordlist:    Option<PathBuf>,
     pub mask_modal_open:    bool,
     pub mask_input:         String,
+    pub backend_catalog:    BackendCatalog,
+    pub backend_selection:  BackendSelection,
     pub worker_state:       WorkerState,
     pub cipher_suite:       String,
     pub target_path:        String,
@@ -276,6 +278,8 @@ impl Default for AppState {
             custom_wordlist:    None,
             mask_modal_open:    false,
             mask_input:         "?u?l?l?l?d?d".into(),
+            backend_catalog:    BackendCatalog::probe(),
+            backend_selection:  BackendSelection::Auto,
             analysis:           FileAnalysis::default(),
             attack_options:     Vec::new(),
             attack_selected:    0,
@@ -528,6 +532,7 @@ impl AppState {
             wordlist_path:   self.custom_wordlist.as_ref().map(|p| p.to_string_lossy().to_string()),
             start_offset:    0,
             cipher_desc:     Some(self.analysis.lock_type.clone()),
+            backend_selection: self.backend_selection,
         };
 
         self.target_path       = req.target_path.clone();
@@ -567,8 +572,8 @@ impl AppState {
             wordlist_path:   None,
             start_offset:    0,
             cipher_desc:     Some(self.analysis.lock_type.clone()),
+            backend_selection: self.backend_selection,
         };
-
         self.target_path       = req.target_path.clone();
         self.cipher_suite      = req.cipher_suite.clone();
         self.active_engine     = active_engine;
@@ -617,8 +622,8 @@ impl AppState {
             wordlist_path:   self.custom_wordlist.as_ref().map(|p| p.to_string_lossy().to_string()),
             start_offset:    offset,
             cipher_desc:     Some(self.analysis.lock_type.clone()),
+            backend_selection: self.backend_selection,
         };
-
         self.target_path       = req.target_path.clone();
         self.cipher_suite      = req.cipher_suite.clone();
         self.active_engine     = active_engine;
@@ -956,7 +961,23 @@ impl AppState {
             'r' | 'R' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack => {
                 self.resume_attack_from_checkpoint();
             }
-            'e' | 'E' if self.current_tab == Tab::Analyze || self.current_tab == Tab::Sessions => {
+            'e' | 'E' if self.current_tab == Tab::Analyze => {
+                self.backend_selection = self.backend_selection.next(&self.backend_catalog);
+                let name = self.backend_selection.display_name();
+                self.add_log(LogLevel::Lock, "", &format!("⚡ Decryption Backend Switched: {}", name));
+            }
+            'e' | 'E' if self.current_tab == Tab::Sessions => {
+                match export_audit_report(&self.analysis, &self.sessions, &self.current_dir) {
+                    Ok(path) => {
+                        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        self.add_log(LogLevel::Lock, "", &format!("✨ Cryptographic Audit Report exported: {}", name));
+                    }
+                    Err(e) => {
+                        self.add_log(LogLevel::Err, "", &format!("Audit report export failed: {}", e));
+                    }
+                }
+            }
+            'x' | 'X' if self.current_tab == Tab::Analyze || self.current_tab == Tab::Sessions => {
                 match export_audit_report(&self.analysis, &self.sessions, &self.current_dir) {
                     Ok(path) => {
                         let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();

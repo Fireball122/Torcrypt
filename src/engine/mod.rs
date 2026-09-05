@@ -22,6 +22,7 @@ pub use wordlist_profiler::WordlistProfile;
 
 pub use session_db::{DbSession, PotfileRecord, SessionDatabase};
 pub use system_info::SystemMonitor;
+pub use backends::{BackendCatalog, BackendSelection, BackendType};
 
 pub use protocol::{
     AttackRequest, ComputeEngine, EngineCommand, LogLevel, TelemetryEvent, WorkerState,
@@ -173,6 +174,7 @@ mod tests {
             wordlist_path:  None,
             start_offset:   0,
             cipher_desc:    Some("ZipCrypto Standard".into()),
+            backend_selection: BackendSelection::Native,
         };
 
         engine.send(EngineCommand::StartAttack(req));
@@ -222,6 +224,7 @@ mod tests {
             wordlist_path:  None,
             start_offset:   0,
             cipher_desc:    Some("ZipCrypto Standard".into()),
+            backend_selection: BackendSelection::Native,
         };
 
         engine.send(EngineCommand::StartAttack(req));
@@ -247,6 +250,111 @@ mod tests {
     }
 
     #[test]
+    fn test_backend_selection_cycling() {
+        let catalog = BackendCatalog::probe();
+        let s0 = BackendSelection::Auto;
+        let s1 = s0.next(&catalog);
+        assert_ne!(s0, s1);
+        let s_end = s1.next(&catalog);
+        assert!(!s_end.display_name().is_empty());
+    }
+
+    #[test]
+    fn test_external_backend_hashcat_or_native_dispatch() {
+        let temp_path = std::env::temp_dir().join("torcrypt_e2e_dispatch.hash");
+        // MD5 of "hello"
+        std::fs::write(&temp_path, "5d41402abc4b2a76b9719d911017c592").unwrap();
+
+        let engine = EngineHandle::new();
+        let req = AttackRequest {
+            target_path:    temp_path.to_string_lossy().to_string(),
+            cipher_suite:   "MD5 Digest".into(),
+            active_engine:  ComputeEngine::CpuSimd,
+            strategy_id:    "wordlist_fast".into(),
+            strategy_title: "Common Dictionary Candidates".into(),
+            keyspace_name:  "Common Dictionary".into(),
+            items_total:    1_000,
+            speed_base:     10_000.0,
+            thread_count:   2,
+            wordlist_path:  None,
+            start_offset:   0,
+            cipher_desc:    Some("MD5 Digest".into()),
+            backend_selection: BackendSelection::Auto,
+        };
+
+        engine.send(EngineCommand::StartAttack(req));
+
+        let mut recovered_key = None;
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(10) {
+            if let Ok(event) = engine.rx.recv_timeout(Duration::from_millis(50)) {
+                match event {
+                    TelemetryEvent::KeyFound { cracked_key, .. } => {
+                        recovered_key = Some(cracked_key);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let _ = std::fs::remove_file(&temp_path);
+        assert!(recovered_key.is_some(), "Engine should recover 'hello'");
+        let key_str = recovered_key.unwrap();
+        assert!(key_str.contains("hello"), "Recovered key must contain 'hello', got: {}", key_str);
+    }
+
+    #[test]
+    fn test_external_backend_hashcat_direct() {
+        let catalog = BackendCatalog::probe();
+        if !catalog.has_hashcat() {
+            return; // Skip if hashcat not installed on host
+        }
+
+        let temp_path = std::env::temp_dir().join("torcrypt_e2e_hashcat_direct.hash");
+        // MD5 of "hello"
+        std::fs::write(&temp_path, "5d41402abc4b2a76b9719d911017c592").unwrap();
+
+        let engine = EngineHandle::new();
+        let req = AttackRequest {
+            target_path:    temp_path.to_string_lossy().to_string(),
+            cipher_suite:   "MD5 Digest".into(),
+            active_engine:  ComputeEngine::CpuSimd,
+            strategy_id:    "wordlist_fast".into(),
+            strategy_title: "Fast Dictionary Pass".into(),
+            keyspace_name:  "Dictionary Candidates".into(),
+            items_total:    1_000,
+            speed_base:     50_000.0,
+            thread_count:   2,
+            wordlist_path:  None,
+            start_offset:   0,
+            cipher_desc:    Some("MD5 Digest".into()),
+            backend_selection: BackendSelection::Hashcat,
+        };
+
+        engine.send(EngineCommand::StartAttack(req));
+
+        let mut recovered_key = None;
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(10) {
+            if let Ok(event) = engine.rx.recv_timeout(Duration::from_millis(50)) {
+                match event {
+                    TelemetryEvent::KeyFound { cracked_key, .. } => {
+                        recovered_key = Some(cracked_key);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let _ = std::fs::remove_file(&temp_path);
+        assert!(recovered_key.is_some(), "Hashcat should recover 'hello'");
+        let key_str = recovered_key.unwrap();
+        assert!(key_str.contains("hello"), "Recovered key must contain 'hello', got: {}", key_str);
+    }
+
+    #[test]
     fn test_pause_resume_cancel() {
         let temp_path = std::env::temp_dir().join("torcrypt_pause_resume.hash");
         // MD5 of an unguessable string to ensure worker runs without immediately finishing
@@ -266,6 +374,7 @@ mod tests {
             wordlist_path:  None,
             start_offset:   0,
             cipher_desc:    Some("MD5 Digest".into()),
+            backend_selection: BackendSelection::Native,
         };
 
         engine.send(EngineCommand::StartAttack(req));
@@ -332,6 +441,7 @@ mod tests {
             wordlist_path:  None,
             start_offset:   0,
             cipher_desc:    Some("MD5 Digest".into()),
+            backend_selection: BackendSelection::Native,
         };
 
         engine.send(EngineCommand::StartAttack(req));

@@ -37,6 +37,11 @@ dt
     - **RAR Archives (`Rar!\x1A\x07`):** Identifies RAR4 (`$rar3$`) and RAR5 (`$rar5$`) headers.
     - **Raw Encrypted Vaults (`.enc`, `.aes`):** Calculates Shannon entropy ($0.0 \to 8.0\,\text{bits/byte}$) to identify encrypted blocks.
   - Attack strategy selector: `[Tab]` to cycle between **Standard Wordlist + Rules**, **Mask / Brute-Force Matrix**, and **Contextual Metadata Attack**.
+  - **Decryption GUI & Backend Selector (`[E]`):** Seamlessly operates as a terminal GUI frontend for industry-standard recovery tools:
+    - **⚡ Hashcat:** GPU/CUDA/OpenCL acceleration mapped across 15+ container and hash modes.
+    - **🔨 John the Ripper:** Multi-core SIMD and Jumbo container format recovery.
+    - **📦 fcrackzip:** High-performance dedicated ZIP dictionary and brute-force cracking.
+    - **🦀 Native Pure-Rust Engine:** In-process AVX2 SIMD fallback when no external tools are present.
   - One-click launch (`[A]` / `[Space]`) into live multi-threaded decryption pipeline.
 
 - **Tab 2: Live Worker & Throughput Dashboard (`[2 Dashboard]`):**
@@ -66,6 +71,8 @@ dt
 | `Enter` | Open directory in explorer / Launch selected task |
 | `←` / `Backspace` / `H` | Navigate back / level up to parent directory |
 | `Tab` | Cycle attack strategies on selected container |
+| `E` | Cycle Decryption GUI Backend (Auto / Hashcat / John / fcrackzip / Native) |
+| `X` | Export Cryptographic Audit Report |
 | `A` / `Space` | Launch multi-threaded decryption recovery pipeline |
 | `Space` | Pause / Resume active worker pipeline |
 | `C` | Cancel active session |

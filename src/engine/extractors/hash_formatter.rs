@@ -18,6 +18,7 @@ pub fn format_archive_hash(target_path: &Path) -> Option<String> {
         "zip" | "jar" => format_zip_hash(target_path),
         "pdf"         => format_pdf_hash(target_path),
         "7z"          => format_7z_hash(target_path),
+        "rar"         => format_rar5_hash(target_path),
         _             => None,
     }
 }
@@ -257,6 +258,23 @@ fn format_7z_hash(path: &Path) -> Option<String> {
         iv_hex,
         sample_buf.len(),
         data_hex
+    ))
+}
+
+// ─── RAR5 Format ($rar5$) ─────────────────────────────────────────────────────
+
+fn format_rar5_hash(path: &Path) -> Option<String> {
+    let target = crate::engine::crackers::rar::Rar5Target::load_from_file(path)?;
+    let salt_hex = to_hex(&target.salt);
+    let check_hex = to_hex(&target.psw_check);
+    let log2_rounds = (31 - target.rounds.leading_zeros()).max(1);
+    Some(format!(
+        "$rar5${}${}${}$00000000000000000000000000000000${}${}",
+        target.salt.len(),
+        salt_hex,
+        log2_rounds,
+        target.psw_check.len(),
+        check_hex
     ))
 }
 

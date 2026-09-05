@@ -63,6 +63,7 @@ pub struct AttackRequest {
     pub start_offset:    u64,
     /// Passed into BackendJob::launch so hashcat_mode_for() can select -m <mode>
     pub cipher_desc:     Option<String>,
+    pub backend_selection: crate::engine::backends::BackendSelection,
 }
 
 #[derive(Debug, Clone)]

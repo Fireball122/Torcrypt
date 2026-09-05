@@ -11,8 +11,9 @@ use ratatui::{
 
 pub fn render_system(frame: &mut Frame, area: Rect, app: &AppState) {
     let rows = Layout::vertical([
-        Constraint::Percentage(50), // Top: Host/CPU + Discrete GPU Accelerator Card
-        Constraint::Percentage(50), // Bottom: Cryptographic Hardware Engine Flags
+        Constraint::Percentage(45), // Top: Host/CPU + Discrete GPU Accelerator Card
+        Constraint::Length(8),      // Middle: External Decryption GUI Backends
+        Constraint::Min(0),         // Bottom: Cryptographic Hardware Engine Flags
     ])
     .split(area);
 
@@ -24,7 +25,8 @@ pub fn render_system(frame: &mut Frame, area: Rect, app: &AppState) {
 
     render_host_card(frame, top_cols[0], app);
     render_gpu_card(frame, top_cols[1], app);
-    render_crypto_flags(frame, rows[1], app);
+    render_external_tools_card(frame, rows[1], app);
+    render_crypto_flags(frame, rows[2], app);
 }
 
 // ─── Card 1: Host & CPU Environment ──────────────────────────────────────────
@@ -266,4 +268,66 @@ fn render_crypto_flags(frame: &mut Frame, area: Rect, app: &AppState) {
             ])
         );
     frame.render_widget(right_table, cols[1]);
+}
+
+fn render_external_tools_card(frame: &mut Frame, area: Rect, app: &AppState) {
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::raw("─ ◈ "),
+            Span::styled("EXTERNAL DECRYPTION GUI ENGINES & EXTRACTORS", theme::style_title()),
+            Span::styled("  [Active Preference: ", theme::style_subtext()),
+            Span::styled(app.backend_selection.display_name(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("] ", theme::style_subtext()),
+        ]))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme::style_border());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let cat = &app.backend_catalog;
+    let rows_data: Vec<(&'static str, &'static str, Option<&std::path::Path>, &'static str)> = vec![
+        ("Hashcat", "GPU / OpenCL / CUDA Accelerator", cat.hashcat.as_deref(), "Primary GPU Acceleration Engine"),
+        ("John the Ripper", "Multi-Core CPU SIMD / OpenMP", cat.john.as_deref(), "Jumbo Container & Hash Cracker"),
+        ("fcrackzip", "Dedicated Multi-Threaded ZIP", cat.fcrackzip.as_deref(), "Fast ZIP Dictionary / Brute-Force"),
+        ("Archive Extractors", "zip2john / rar2john / 7z2john", cat.zip2john.as_deref().or(cat.rar2john.as_deref()), "Container Hash Extractors"),
+    ];
+
+    let rows: Vec<Row> = rows_data
+        .into_iter()
+        .map(|(name, typ, path, role)| {
+            let (status_badge, status_style) = if path.is_some() {
+                ("INSTALLED ✔", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            } else {
+                ("NOT DETECTED", Style::default().fg(Color::DarkGray))
+            };
+            let path_str = path.map(|p| p.display().to_string()).unwrap_or_else(|| "Not found in PATH".into());
+
+            Row::new(vec![
+                Cell::from(name).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Cell::from(status_badge).style(status_style),
+                Cell::from(typ).style(Style::default().fg(Color::Cyan)),
+                Cell::from(path_str).style(Style::default().fg(Color::Yellow)),
+                Cell::from(role).style(theme::style_subtext()),
+            ])
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(18),
+        Constraint::Length(14),
+        Constraint::Length(30),
+        Constraint::Percentage(28),
+        Constraint::Min(0),
+    ];
+    let table = Table::new(rows, widths)
+        .header(Row::new(vec![
+            Cell::from("TOOL").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
+            Cell::from("STATUS").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
+            Cell::from("ACCELERATION TYPE").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
+            Cell::from("HOST BINARY PATH").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
+            Cell::from("GUI ROLE").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
+        ]))
+        .column_spacing(2);
+    frame.render_widget(table, inner);
 }

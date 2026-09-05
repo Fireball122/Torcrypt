@@ -217,41 +217,36 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
                 if a.is_encrypted { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() }),
         ]),
         Line::from(vec![
-            Span::styled("  Execution Route: ", theme::style_subtext()),
-            Span::styled(
-                if !a.is_encrypted {
-                    "INSPECTION ONLY (No password required)"
-                } else if a.ready_to_crack {
-                    if a.lock_type.contains("ZipCrypto")
-                        || a.lock_type.contains("WinZip")
-                        || a.lock_type.contains("PDF")
-                        || a.lock_type.contains("RAR5")
-                        || a.lock_type.contains("7-Zip")
-                        || a.lock_type.contains("KeePass")
-                        || a.lock_type.contains("MD5")
-                        || a.lock_type.contains("SHA-1")
-                        || a.lock_type.contains("SHA-256")
-                        || a.lock_type.contains("NTLM")
-                    {
-                        "✔ NATIVE VERIFIED (In-process cryptographic engine)"
-                    } else {
-                        "⚙ EXTERNAL DELEGATION (Hashcat / John the Ripper)"
-                    }
+            Span::styled("  Decryption GUI: ", theme::style_subtext()),
+            {
+                let resolved = if a.ready_to_crack {
+                    app.backend_catalog.resolve_backend(
+                        app.backend_selection,
+                        std::path::Path::new(&a.file_path),
+                        &a.lock_type,
+                        a.ready_to_crack,
+                    )
                 } else {
-                    "✖ NOT CRACKABLE IN-PROCESS (Requires external extractor tool)"
-                },
-                if !a.is_encrypted {
-                    Style::default().fg(Color::DarkGray)
-                } else if a.ready_to_crack {
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                },
-            ),
+                    crate::engine::backends::BackendType::None
+                };
+                let style = match resolved {
+                    crate::engine::backends::BackendType::Hashcat   => Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    crate::engine::backends::BackendType::John      => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    crate::engine::backends::BackendType::Fcrackzip => Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD),
+                    crate::engine::backends::BackendType::Native    => Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    crate::engine::backends::BackendType::None      => Style::default().fg(Color::Red),
+                };
+                Span::styled(format!("{} ", resolved.display_name()), style)
+            },
+            Span::styled(" │ [E: Cycle Backend]", Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(vec![
-            Span::styled("  Auto-Router   : ", theme::style_subtext()),
-            Span::styled(engine_badge.0, Style::default().fg(engine_badge.1).add_modifier(Modifier::BOLD)),
+            Span::styled("  Backend Mode  : ", theme::style_subtext()),
+            Span::styled(
+                format!("Preference: {} ", app.backend_selection.display_name()),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(format!("│ Auto-Router: {}", engine_badge.0), Style::default().fg(engine_badge.1)),
         ]),
         Line::from(vec![
             Span::styled(format!("  Entropy: {:.2} / 8.00 bits ({}% Randomness) ", a.entropy, entropy_pct), theme::style_subtext()),
@@ -320,6 +315,13 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
             Line::from(vec![
                 Span::styled("    • Detected acceleration hardware: ", theme::style_subtext()),
                 Span::styled(format!("{} + {}", app.sys_cpu, app.sys_gpu_name), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::styled("    • Decryption GUI Backend (Press ", theme::style_subtext()),
+                Span::styled("[E]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(" to cycle): ", theme::style_subtext()),
+                Span::styled(app.backend_selection.display_name(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(format!(" │ Detected: {}", app.backend_catalog.summary()), theme::style_subtext()),
             ]),
         ]);
         frame.render_widget(p, inner);
@@ -415,9 +417,19 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
     };
 
     let checkpoint = app.session_db.as_ref().and_then(|db| db.get_latest_checkpoint(&app.analysis.file_path));
+    let resolved = app.backend_catalog.resolve_backend(
+        app.backend_selection,
+        std::path::Path::new(&app.analysis.file_path),
+        &app.analysis.lock_type,
+        app.analysis.ready_to_crack,
+    );
+
     let mut spans = vec![
         Span::styled(" [A / Space] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::styled(format!(" Launch {} ", active_label), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" Launch via {} ", resolved.short_name()), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("({}) ", active_label), Style::default().fg(Color::White)),
+        Span::styled(" │ [E] Backend: ", theme::style_subtext()),
+        Span::styled(format!("{} ", app.backend_selection.short_name()), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
     ];
     if let Some((ses_id, offset)) = checkpoint {
         spans.push(Span::styled(" │ ", theme::style_dim()));

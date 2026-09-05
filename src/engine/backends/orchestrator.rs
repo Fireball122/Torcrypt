@@ -50,6 +50,7 @@ impl BackendJob {
         wordlist:      Option<&Path>,
         candidates:    Option<Vec<String>>,
         cipher_desc:   Option<&str>,
+        strategy_id:   Option<&str>,
     ) -> Result<Self, String> {
         // 1. Prioritize in-process extraction to avoid external tool dependencies
         let (actual_target, temp_hash_file) = if let Some(hash_str) = crate::engine::extractors::format_archive_hash(target_path) {
@@ -80,6 +81,8 @@ impl BackendJob {
 
         let mut cmd = Command::new(backend_bin);
 
+        let mut resolved_mode: Option<u32> = None;
+
         match backend_type {
             BackendType::Hashcat => {
                 // Configure Hashcat arguments
@@ -89,6 +92,7 @@ impl BackendJob {
 
                 if let Some(desc) = cipher_desc {
                     if let Some(mode) = super::detector::hashcat_mode_for(desc) {
+                        resolved_mode = Some(mode);
                         cmd.arg("-m").arg(mode.to_string());
                     }
                 }
@@ -96,12 +100,40 @@ impl BackendJob {
                 cmd.arg(&actual_target);
 
                 if let Some(w) = wordlist {
+                    cmd.arg("-a").arg("0");
                     cmd.arg(w);
+                    if let Some(strat) = strategy_id {
+                        if strat.contains("rules") || strat.contains("best64") {
+                            let rule_path = Path::new("/usr/share/hashcat/rules/best64.rule");
+                            if rule_path.is_file() {
+                                cmd.arg("-r").arg(rule_path);
+                            }
+                        }
+                    }
+                } else if let Some(strat) = strategy_id {
+                    if strat.starts_with("mask_pattern:") {
+                        let pat = &strat["mask_pattern:".len()..];
+                        cmd.arg("-a").arg("3").arg(pat);
+                    } else if strat.contains("10d") {
+                        cmd.arg("-a").arg("3").arg("?d?d?d?d?d?d?d?d?d?d");
+                    } else if strat.contains("8d") {
+                        cmd.arg("-a").arg("3").arg("?d?d?d?d?d?d?d?d");
+                    } else if strat.contains("6d") || strat.contains("pin") {
+                        cmd.arg("-a").arg("3").arg("?d?d?d?d?d?d");
+                    } else if strat.contains("4d") {
+                        cmd.arg("-a").arg("3").arg("?d?d?d?d");
+                    } else if strat.contains("hybrid") {
+                        cmd.arg("-a").arg("3").arg("?u?l?l?l?d?d");
+                    } else if candidates.is_some() {
+                        cmd.arg("--stdin");
+                        cmd.stdin(Stdio::piped());
+                    } else {
+                        cmd.arg("-a").arg("3").arg("?l?l?l?l?l?l?l?l");
+                    }
                 } else if candidates.is_some() {
                     cmd.arg("--stdin");
                     cmd.stdin(Stdio::piped());
                 } else {
-                    // Default mask attack (8 lower-case)
                     cmd.arg("-a").arg("3").arg("?l?l?l?l?l?l?l?l");
                 }
             }
@@ -109,11 +141,46 @@ impl BackendJob {
                 // Configure John the Ripper arguments
                 if let Some(w) = wordlist {
                     cmd.arg(format!("--wordlist={}", w.display()));
+                    if let Some(strat) = strategy_id {
+                        if strat.contains("rules") || strat.contains("best64") {
+                            cmd.arg("--rules");
+                        }
+                    }
+                } else if let Some(strat) = strategy_id {
+                    if strat.starts_with("mask_pattern:") {
+                        let pat = &strat["mask_pattern:".len()..];
+                        cmd.arg(format!("--mask={}", pat));
+                    } else if strat.contains("10d") {
+                        cmd.arg("--mask=?d?d?d?d?d?d?d?d?d?d");
+                    } else if strat.contains("8d") {
+                        cmd.arg("--mask=?d?d?d?d?d?d?d?d");
+                    } else if strat.contains("6d") || strat.contains("pin") {
+                        cmd.arg("--mask=?d?d?d?d?d?d");
+                    } else if strat.contains("4d") {
+                        cmd.arg("--mask=?d?d?d?d");
+                    } else if strat.contains("hybrid") {
+                        cmd.arg("--mask=?u?l?l?l?d?d");
+                    } else if candidates.is_some() {
+                        cmd.arg("--stdin");
+                        cmd.stdin(Stdio::piped());
+                    }
                 } else if candidates.is_some() {
                     cmd.arg("--stdin");
                     cmd.stdin(Stdio::piped());
                 }
                 cmd.arg(&actual_target);
+            }
+            BackendType::Fcrackzip => {
+                cmd.arg("-u");
+                if let Some(w) = wordlist {
+                    cmd.arg("-D").arg("-p").arg(w);
+                } else {
+                    cmd.arg("-b").arg("-c").arg("a").arg("-l").arg("1-6");
+                }
+                cmd.arg(&actual_target);
+            }
+            BackendType::Native => {
+                return Err("Native engine runs in-process".into());
             }
             BackendType::None => {
                 return Err("No external backend specified".into());
@@ -155,7 +222,8 @@ impl BackendJob {
         let stop_clone = Arc::clone(&stop_flag);
         let tx_clone = tx.clone();
         let btype = backend_type;
-
+        let actual_target_clone = actual_target.clone();
+        let backend_bin_path = backend_bin.to_path_buf();
         let reader_thr = thread::spawn(move || {
             let mut last_speed = 0.0;
             let mut last_done = 0;
@@ -206,7 +274,12 @@ impl BackendJob {
                                     found_password = Some(recovered);
                                 }
                             }
-                            BackendType::None => {}
+                            BackendType::Fcrackzip => {
+                                if let Some(recovered) = parse_fcrackzip_cracked(trimmed) {
+                                    found_password = Some(recovered);
+                                }
+                            }
+                            BackendType::Native | BackendType::None => {}
                         }
                     }
                 }
@@ -229,6 +302,44 @@ impl BackendJob {
                             });
                         }
                     }
+                }
+            }
+
+            // Check potfile / show fallback if password was not captured from live stdout
+            if found_password.is_none() {
+                match btype {
+                    BackendType::Hashcat => {
+                        let mut check_cmd = Command::new(&backend_bin_path);
+                        if let Some(m) = resolved_mode {
+                            check_cmd.arg("-m").arg(m.to_string());
+                        }
+                        check_cmd.arg("--show").arg(&actual_target_clone);
+                        if let Ok(out) = check_cmd.output() {
+                            let text = String::from_utf8_lossy(&out.stdout);
+                            for l in text.lines() {
+                                if let Some(pwd) = parse_hashcat_cracked(l.trim()) {
+                                    found_password = Some(pwd);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    BackendType::John => {
+                        if let Ok(out) = Command::new(&backend_bin_path)
+                            .arg("--show")
+                            .arg(&actual_target_clone)
+                            .output()
+                        {
+                            let text = String::from_utf8_lossy(&out.stdout);
+                            for l in text.lines() {
+                                if let Some(pwd) = parse_john_cracked(l.trim()) {
+                                    found_password = Some(pwd);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -422,6 +533,27 @@ pub fn parse_john_cracked(line: &str) -> Option<String> {
             return Some(parts[0].to_string());
         }
     }
+    // Also support John --show format: "hash:password" or "filename:password"
+    if let Some(idx) = line.rfind(':') {
+        let pwd = line[idx + 1..].trim();
+        if !pwd.is_empty() && !line.starts_with("0 password") && !line.starts_with("1 password") {
+            if !line.contains("password hash cracked") {
+                return Some(pwd.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn parse_fcrackzip_cracked(line: &str) -> Option<String> {
+    if line.contains("pw ==") {
+        if let Some(idx) = line.find("pw ==") {
+            let pwd = line[idx + 5..].trim();
+            if !pwd.is_empty() {
+                return Some(pwd.to_string());
+            }
+        }
+    }
     None
 }
 
@@ -464,6 +596,11 @@ mod tests {
         assert_eq!(parse_john_cracked(cracked), Some("secret123".into()));
     }
     #[test]
+    fn test_parse_fcrackzip_cracked() {
+        let line = "PASSWORD FOUND!!!!: pw == secret123";
+        assert_eq!(parse_fcrackzip_cracked(line), Some("secret123".into()));
+    }
+    #[test]
     fn test_backend_launch_nonexistent_binary_cleans_up_and_fails() {
         let nonexistent = Path::new("/bin/nonexistent_hashcat_test_tool");
         let dummy_target = Path::new("/tmp/dummy_test_file.hash");
@@ -471,6 +608,7 @@ mod tests {
             BackendType::Hashcat,
             nonexistent,
             dummy_target,
+            None,
             None,
             None,
             None,

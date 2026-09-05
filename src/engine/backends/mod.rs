@@ -5,5 +5,5 @@
 pub mod detector;
 pub mod orchestrator;
 
-pub use detector::{BackendCatalog, BackendType, ExternalTool};
+pub use detector::{BackendCatalog, BackendSelection, BackendType, ExternalTool};
 pub use orchestrator::{BackendJob, BackendStatus, BackendTelemetry};

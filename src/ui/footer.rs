@@ -42,6 +42,8 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
             spans.push(key("W"));
             spans.push(label("Wordlist"));
             spans.push(key("E"));
+            spans.push(label("Backend"));
+            spans.push(key("X"));
             spans.push(label("Export Audit"));
             if app.analysis.ready_to_crack {
                 spans.push(key("M"));

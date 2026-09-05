@@ -47,7 +47,10 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
             Span::styled("LIVE CIPHER WORKER", theme::style_title()),
-            Span::raw(" "),
+            Span::styled(
+                format!(" [{}] ", app.backend_selection.short_name()),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            ),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -110,6 +113,10 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
             Span::styled("  Target Vault  : ", theme::style_subtext()),
             Span::styled(truncate(&app.target_path, inner.width.saturating_sub(18) as usize),
                 Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Decryption GUI: ", theme::style_subtext()),
+            Span::styled(app.backend_selection.display_name(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![
             Span::styled("  Compute Engine: ", theme::style_subtext()),

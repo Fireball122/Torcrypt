@@ -62,8 +62,11 @@ pub fn render_help_modal(frame: &mut Frame, area: Rect, _app: &AppState) {
         &[
             ("[J / K] or [↑ / ↓]", "Navigate file explorer & select target file"),
             ("[Enter]",            "Open directory or launch decryption recovery"),
+            ("[E]",                "Cycle Decryption GUI Backend (Auto / Hashcat / John / Native)"),
             ("[A / Space]",        "Launch multi-threaded recovery attack pipeline"),
             ("[Tab] / [1-6]",      "Select strategy (Auto / 10-Digit Mask / RockYou / Rules / Stream)"),
+            ("[W]",                "Set custom wordlist dictionary file"),
+            ("[X]",                "Export formal cryptographic audit report"),
             ("[H / Backspace]",    "Navigate up to parent directory [..]"),
         ],
     );
