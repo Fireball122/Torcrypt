@@ -12,7 +12,7 @@ pub struct BenchResult {
     pub hw_accel:      bool,
 }
 
-/// Run an authentic calibration benchmark for a specific algorithm stage (0..=4)
+/// Run an authentic calibration benchmark for a specific algorithm stage (0..=8)
 pub fn benchmark_stage(stage: usize, thread_count: u8) -> BenchResult {
     let threads = (thread_count as u64).max(1);
 
@@ -21,7 +21,11 @@ pub fn benchmark_stage(stage: usize, thread_count: u8) -> BenchResult {
         1 => benchmark_ntlm(threads),
         2 => benchmark_sha256(threads),
         3 => benchmark_sha1(threads),
-        _ => benchmark_zipcrypto(threads),
+        4 => benchmark_zipcrypto(threads),
+        5 => benchmark_rc4(threads),
+        6 => benchmark_pbkdf2_sha1(threads),
+        7 => benchmark_pbkdf2_sha256(threads),
+        _ => benchmark_pbkdf2_sha256_keepass(threads),
     }
 }
 
@@ -35,6 +39,9 @@ pub fn run_full_benchmark(thread_count: u8) -> Vec<BenchResult> {
         benchmark_sha1(threads),
         benchmark_zipcrypto(threads),
         benchmark_rc4(threads),
+        benchmark_pbkdf2_sha1(threads),
+        benchmark_pbkdf2_sha256(threads),
+        benchmark_pbkdf2_sha256_keepass(threads),
     ]
 }
 
@@ -242,6 +249,78 @@ fn benchmark_rc4(threads: u64) -> BenchResult {
     }
 }
 
+fn benchmark_pbkdf2_sha1(threads: u64) -> BenchResult {
+    // PBKDF2-HMAC-SHA1, 1000 rounds (WinZip AES default)
+    use crate::engine::crypto::pbkdf2_hmac_sha1;
+    let password = b"benchmark_winzip_pass";
+    let salt = b"bnchmrk_slat0001";
+    let iterations = 2_000usize;
+    let start = std::time::Instant::now();
+    for _ in 0..iterations {
+        let mut out = [0u8; 32];
+        pbkdf2_hmac_sha1(password, salt, 1000, &mut out);
+    }
+    let elapsed = start.elapsed();
+    let elapsed_secs = elapsed.as_secs_f64().max(0.0001);
+    let candidates_per_sec = (iterations as f64 / elapsed_secs) as u64;
+    let latency_us = (elapsed.as_micros() as f64) / (iterations as f64);
+    BenchResult {
+        name: "PBKDF2-SHA1 / 1K (WinZip AES)".into(),
+        single_mb: (candidates_per_sec / 1000).max(1),
+        multi_mb: ((candidates_per_sec / 1000) * threads).max(1),
+        latency_us,
+        hw_accel: false,
+    }
+}
+
+fn benchmark_pbkdf2_sha256(threads: u64) -> BenchResult {
+    // PBKDF2-HMAC-SHA256, 32768 rounds (RAR5 default)
+    use crate::engine::crypto::pbkdf2_hmac_sha256;
+    let password = b"benchmark_rar5_pass";
+    let salt = b"rar5_bench_salt16";
+    let iterations = 200usize;
+    let start = std::time::Instant::now();
+    for _ in 0..iterations {
+        let mut out = [0u8; 32];
+        pbkdf2_hmac_sha256(password, salt, 32768, &mut out);
+    }
+    let elapsed = start.elapsed();
+    let elapsed_secs = elapsed.as_secs_f64().max(0.0001);
+    let candidates_per_sec = (iterations as f64 / elapsed_secs) as u64;
+    let latency_us = (elapsed.as_micros() as f64) / (iterations as f64);
+    BenchResult {
+        name: "PBKDF2-SHA256 / 32K (RAR5 KDF)".into(),
+        single_mb: candidates_per_sec.max(1),
+        multi_mb: (candidates_per_sec * threads).max(1),
+        latency_us,
+        hw_accel: false,
+    }
+}
+
+fn benchmark_pbkdf2_sha256_keepass(threads: u64) -> BenchResult {
+    // PBKDF2-HMAC-SHA256, 60000 rounds (KeePass 2.x default AES-KDF)
+    use crate::engine::crypto::pbkdf2_hmac_sha256;
+    let password = b"benchmark_keepass_master";
+    let salt = [0xABu8; 32];
+    let iterations = 50usize;
+    let start = std::time::Instant::now();
+    for _ in 0..iterations {
+        let mut out = [0u8; 32];
+        pbkdf2_hmac_sha256(password, &salt, 60000, &mut out);
+    }
+    let elapsed = start.elapsed();
+    let elapsed_secs = elapsed.as_secs_f64().max(0.0001);
+    let candidates_per_sec = (iterations as f64 / elapsed_secs) as u64;
+    let latency_us = (elapsed.as_micros() as f64) / (iterations as f64);
+    BenchResult {
+        name: "PBKDF2-SHA256 / 60K (KeePass AES-KDF)".into(),
+        single_mb: candidates_per_sec.max(1),
+        multi_mb: (candidates_per_sec * threads).max(1),
+        latency_us,
+        hw_accel: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,7 +328,7 @@ mod tests {
     #[test]
     fn test_benchmark_full_run() {
         let results = run_full_benchmark(4);
-        assert_eq!(results.len(), 6);
+        assert_eq!(results.len(), 9);
         for r in results {
             assert!(r.single_mb > 0, "Throughput should be > 0 for {}", r.name);
             assert!(r.latency_us > 0.0, "Latency should be > 0 for {}", r.name);

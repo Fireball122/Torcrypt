@@ -845,15 +845,15 @@ impl AppState {
         }
 
         if self.bench_running {
-            let stage = (self.bench_progress / 20) as usize;
-            if stage < 5 {
+            let stage = ((self.bench_progress as usize + 1) * 9) / 100;
+            if stage < 9 {
                 let res = benchmark_stage(stage, self.thread_count);
                 if stage < self.bench_results.len() {
                     self.bench_results[stage] = res;
                 } else {
                     self.bench_results.push(res);
                 }
-                self.bench_progress = ((stage + 1) * 20).min(100) as u8;
+                self.bench_progress = (((stage + 1) * 100) / 9).min(100) as u8;
             }
             if self.bench_progress >= 100 {
                 self.bench_running = false;
@@ -1628,20 +1628,14 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
                 ready_to_crack: true,
             };
         } else if has_eapol {
-            let (ssid_note, lock_label, rec_att) = if filename.contains("complex_ssid") {
-                ("Target SSID: WinterStorm_Corp", "WPA2-PSK 4-Way Handshake (Complex SSID & Rule Mutation)", "Hybrid Rule Mutation (WinterStorm?d?d?d?d!)")
-            } else if filename.contains("complex") {
-                ("Target SSID: HiddenVaultNetwork (Complex Key)", "WPA2-PSK 4-Way Handshake (PBKDF2-SHA1, 4096 iter)", "Leveled Wordlist + GPU Rules (HiddenVaultNetwork)")
-            } else {
-                ("Target SSID: SecureOfficeWiFi", "WPA2-PSK 4-Way Handshake (PBKDF2-SHA1, 4096 iter, 32-byte PMK)", "Leveled Wordlist + GPU Rules (SecureOfficeWiFi)")
-            };
+            let rec_att = "Convert with hcxpcapngtool -o out.22000 <file>, then: hashcat -m 22000 out.22000 wordlist";
 
             return FileAnalysis {
                 file_path: path.to_string_lossy().to_string(),
                 file_size: size_bytes,
                 mime_type: "application/vnd.tcpdump.pcap (IEEE 802.11 Wireless Frame)".into(),
                 is_encrypted: true,
-                lock_type: lock_label.into(),
+                lock_type: "EAPOL 4-Way Handshake Captured".into(),
                 entropy,
                 magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else if is_hccapx { "HCPX (Hashcat 22000)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
                 recommended_attack: rec_att.into(),
@@ -1702,9 +1696,9 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             lock_type: "MS Office 97-2003 ($office$ RC4 40/128-bit CryptoAPI)".into(),
             entropy,
             magic_header: "D0 CF 11 E0 (OLE2 Compound Doc)".into(),
-            recommended_attack: "Fast GPU Warp Offload (Office 97-2003 RC4)".into(),
+            recommended_attack: "Requires office2john extractor — install john-the-ripper".into(),
             recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
-            ready_to_crack: true,
+            ready_to_crack: false,
         };
     }
 
@@ -1801,9 +1795,9 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             lock_type: "Microsoft BitLocker FDE (AES-XTS 128/256 + TPM)".into(),
             entropy,
             magic_header: "-FVE-FS- (BitLocker)".into(),
-            recommended_attack: "Numeric Recovery Key / Password Matrix Brute-Force".into(),
+            recommended_attack: "Requires bitlocker2john — run: john --format=bitlocker <volume>".into(),
             recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
-            ready_to_crack: true,
+            ready_to_crack: false,
         };
     }
 
@@ -1816,9 +1810,9 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             lock_type: "Linux LUKS2 Volume (Argon2id / PBKDF2 + AES-XTS)".into(),
             entropy,
             magic_header: "LUKS BA BE (LUKS2 Header)".into(),
-            recommended_attack: "Hybrid Allocation (Ryzen 5600 + RTX 4060) Argon2id".into(),
+            recommended_attack: "Requires luks2john — run: luks2john <device> | john --wordlist=<list>".into(),
             recommended_engine: if gpu_available { ComputeEngine::Hybrid } else { ComputeEngine::CpuSimd },
-            ready_to_crack: true,
+            ready_to_crack: false,
         };
     }
 
@@ -1832,7 +1826,7 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             lock_type: "AES-256-CBC / OpenSSL EVP Key Derivation (PBKDF2/EVP)".into(),
             entropy,
             magic_header: if slice.starts_with(b"Salted__") { "53 61 6C 74 65 64 5F 5F (Salted__)".into() } else { hex_header },
-            recommended_attack: "Multi-Threaded Vectorized SIMD + CUDA Brute-Force".into(),
+            recommended_attack: "openssl enc -d -aes-256-cbc -in <file> -out <out> -pbkdf2 -pass pass:<candidate>".into(),
             recommended_engine: if gpu_available { ComputeEngine::Hybrid } else { ComputeEngine::CpuSimd },
             ready_to_crack: true,
         };

@@ -163,6 +163,68 @@ impl BackendCatalog {
     }
 }
 
+/// Return the Hashcat -m mode integer for a given container cipher string.
+/// The `cipher_desc` is the `lock_type` string produced by analyze_file_magic.
+/// Returns None when no Hashcat mode applies (native-only or unsupported).
+pub fn hashcat_mode_for(cipher_desc: &str) -> Option<u32> {
+    let d = cipher_desc.to_ascii_lowercase();
+    if d.contains("md5") && !d.contains("hmac") && !d.contains("pbkdf") {
+        return Some(0);   // Raw MD5
+    }
+    if d.contains("ntlm") || d.contains("sam") {
+        return Some(1000); // NTLM
+    }
+    if d.contains("sha-1") && !d.contains("pbkdf") && !d.contains("hmac") {
+        return Some(100);  // Raw SHA-1
+    }
+    if d.contains("sha-256") && !d.contains("pbkdf") && !d.contains("hmac") {
+        return Some(1400); // Raw SHA-256
+    }
+    if d.contains("zipcrypto") || d.contains("pkware") {
+        return Some(17200); // ZipCrypto CRC32
+    }
+    if d.contains("winzip") || (d.contains("aes") && d.contains("zip")) {
+        return Some(13600); // WinZip AES
+    }
+    if d.contains("pdf") && (d.contains("rc4") || d.contains("revision 2") || d.contains("revision 3")) {
+        return Some(10500); // PDF 1.4
+    }
+    if d.contains("pdf") && d.contains("aes") {
+        return Some(10600); // PDF 1.7 AES
+    }
+    if d.contains("rar3") || d.contains("rar 3") || (d.contains("rar") && !d.contains("rar5")) {
+        return Some(12500); // RAR3
+    }
+    if d.contains("rar5") {
+        return Some(13000); // RAR5
+    }
+    if d.contains("7z") || d.contains("7-zip") {
+        return Some(11600); // 7-Zip
+    }
+    if d.contains("keepass") && d.contains("aes-kdf") {
+        return Some(13400); // KeePass 2.x AES-KDF
+    }
+    if d.contains("keepass") {
+        return Some(13400);
+    }
+    if d.contains("wpa2") || d.contains("pmkid") || d.contains("eapol") {
+        return Some(22000); // WPA2 hcxpcapngtool format
+    }
+    if d.contains("office 97") || d.contains("$office$") || d.contains("cryptoapi") {
+        return Some(9700);  // MS Office 97-2003
+    }
+    if d.contains("office 2013") || d.contains("2013") {
+        return Some(9600);  // MS Office 2013
+    }
+    if d.contains("bitlocker") {
+        return Some(22100); // BitLocker
+    }
+    if d.contains("luks") {
+        return Some(14600); // LUKS
+    }
+    None
+}
+
 fn find_executable(name: &str) -> Option<PathBuf> {
     // 1. Check system PATH
     if let Ok(path_var) = std::env::var("PATH") {

@@ -417,6 +417,310 @@ pub mod avx2 {
 
         None
     }
+
+    /// Tests up to 8 candidate passwords against a target SHA-256 digest (8 u32 words big-endian).
+    /// Candidates must be <= 55 bytes to fit a single 64-byte SHA-256 block.
+    /// Returns Some(index) if any lane matches the target.
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn test_sha256_8way(
+        candidates: &[&[u8]],
+        target_words: [u32; 8],
+    ) -> Option<usize> {
+        let count = candidates.len().min(8);
+        if count == 0 { return None; }
+
+        // SHA-256 round constants K
+        const K: [u32; 64] = [
+            0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+            0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+            0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+            0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+            0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+            0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+            0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+            0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+        ];
+
+        // SHA-256 initial hash values (big-endian)
+        let h0_init = 0x6a09e667u32;
+        let h1_init = 0xbb67ae85u32;
+        let h2_init = 0x3c6ef372u32;
+        let h3_init = 0xa54ff53au32;
+        let h4_init = 0x510e527fu32;
+        let h5_init = 0x9b05688cu32;
+        let h6_init = 0x1f83d9abu32;
+        let h7_init = 0x5be0cd19u32;
+
+        // Prepare padded message blocks for each lane (big-endian)
+        let mut raw_words = [[0u32; 16]; 8];
+        for lane in 0..count {
+            let cand = candidates[lane];
+            if cand.len() > 55 { return None; }
+            let mut block = [0u8; 64];
+            block[..cand.len()].copy_from_slice(cand);
+            block[cand.len()] = 0x80;
+            let bit_len = (cand.len() as u64) * 8;
+            block[56..64].copy_from_slice(&bit_len.to_be_bytes());
+            for w in 0..16 {
+                raw_words[lane][w] = u32::from_be_bytes([
+                    block[w * 4], block[w * 4 + 1], block[w * 4 + 2], block[w * 4 + 3],
+                ]);
+            }
+        }
+
+        // Transpose into 16 AVX2 registers (one per message word, 8 lanes wide)
+        let mut w_reg = [_mm256_setzero_si256(); 16];
+        for i in 0..16 {
+            w_reg[i] = _mm256_setr_epi32(
+                raw_words[0][i] as i32, raw_words[1][i] as i32,
+                raw_words[2][i] as i32, raw_words[3][i] as i32,
+                raw_words[4][i] as i32, raw_words[5][i] as i32,
+                raw_words[6][i] as i32, raw_words[7][i] as i32,
+            );
+        }
+
+        // Extend message schedule W[16..63] using AVX2 bitwise ops
+        // s0 = rotr(w,7) ^ rotr(w,18) ^ (w >> 3)
+        // s1 = rotr(w,17) ^ rotr(w,19) ^ (w >> 10)
+        macro_rules! rotr {
+            ($x:expr, $s:expr) => {
+                _mm256_or_si256(
+                    _mm256_srli_epi32($x, $s),
+                    _mm256_slli_epi32($x, 32 - $s),
+                )
+            };
+        }
+
+        let mut w_ext = [_mm256_setzero_si256(); 64];
+        for i in 0..16usize { w_ext[i] = w_reg[i]; }
+        for i in 16..64usize {
+            let s0 = _mm256_xor_si256(
+                _mm256_xor_si256(rotr!(w_ext[i-15], 7), rotr!(w_ext[i-15], 18)),
+                _mm256_srli_epi32(w_ext[i-15], 3),
+            );
+            let s1 = _mm256_xor_si256(
+                _mm256_xor_si256(rotr!(w_ext[i-2], 17), rotr!(w_ext[i-2], 19)),
+                _mm256_srli_epi32(w_ext[i-2], 10),
+            );
+            w_ext[i] = _mm256_add_epi32(
+                _mm256_add_epi32(w_ext[i-16], s0),
+                _mm256_add_epi32(w_ext[i-7], s1),
+            );
+        }
+
+        // Initialize working variables across all 8 lanes
+        let mut a = _mm256_set1_epi32(h0_init as i32);
+        let mut b = _mm256_set1_epi32(h1_init as i32);
+        let mut c = _mm256_set1_epi32(h2_init as i32);
+        let mut d = _mm256_set1_epi32(h3_init as i32);
+        let mut e = _mm256_set1_epi32(h4_init as i32);
+        let mut f = _mm256_set1_epi32(h5_init as i32);
+        let mut g = _mm256_set1_epi32(h6_init as i32);
+        let mut h = _mm256_set1_epi32(h7_init as i32);
+
+        // 64 compression rounds
+        for i in 0..64usize {
+            // S1 = rotr(e,6) ^ rotr(e,11) ^ rotr(e,25)
+            let s1 = _mm256_xor_si256(
+                _mm256_xor_si256(rotr!(e, 6), rotr!(e, 11)),
+                rotr!(e, 25),
+            );
+            // ch = (e & f) ^ (~e & g)
+            let ch = _mm256_xor_si256(
+                _mm256_and_si256(e, f),
+                _mm256_andnot_si256(e, g),
+            );
+            // temp1 = h + S1 + ch + K[i] + W[i]
+            let temp1 = _mm256_add_epi32(
+                _mm256_add_epi32(
+                    _mm256_add_epi32(h, s1),
+                    _mm256_add_epi32(ch, _mm256_set1_epi32(K[i] as i32)),
+                ),
+                w_ext[i],
+            );
+            // S0 = rotr(a,2) ^ rotr(a,13) ^ rotr(a,22)
+            let s0 = _mm256_xor_si256(
+                _mm256_xor_si256(rotr!(a, 2), rotr!(a, 13)),
+                rotr!(a, 22),
+            );
+            // maj = (a & b) ^ (a & c) ^ (b & c)
+            let maj = _mm256_xor_si256(
+                _mm256_xor_si256(
+                    _mm256_and_si256(a, b),
+                    _mm256_and_si256(a, c),
+                ),
+                _mm256_and_si256(b, c),
+            );
+            // temp2 = S0 + maj
+            let temp2 = _mm256_add_epi32(s0, maj);
+            h = g;
+            g = f;
+            f = e;
+            e = _mm256_add_epi32(d, temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = _mm256_add_epi32(temp1, temp2);
+        }
+
+        // Add initial hash values
+        a = _mm256_add_epi32(a, _mm256_set1_epi32(h0_init as i32));
+        b = _mm256_add_epi32(b, _mm256_set1_epi32(h1_init as i32));
+        c = _mm256_add_epi32(c, _mm256_set1_epi32(h2_init as i32));
+        d = _mm256_add_epi32(d, _mm256_set1_epi32(h3_init as i32));
+        e = _mm256_add_epi32(e, _mm256_set1_epi32(h4_init as i32));
+        f = _mm256_add_epi32(f, _mm256_set1_epi32(h5_init as i32));
+        g = _mm256_add_epi32(g, _mm256_set1_epi32(h6_init as i32));
+        h = _mm256_add_epi32(h, _mm256_set1_epi32(h7_init as i32));
+
+        // Extract each lane and compare against target
+        let results = [a, b, c, d, e, f, g, h];
+        for lane in 0..count {
+            let mut digest = [0u32; 8];
+            for (wi, reg) in results.iter().enumerate() {
+                let mut tmp = [0i32; 8];
+                _mm256_storeu_si256(tmp.as_mut_ptr() as *mut __m256i, *reg);
+                digest[wi] = tmp[lane] as u32;
+            }
+            if digest == target_words {
+                return Some(lane);
+            }
+        }
+        None
+    }
+
+    /// Tests up to 8 candidate passwords against a target SHA-1 digest (5 u32 words big-endian).
+    /// Candidates must be <= 55 bytes to fit a single 64-byte SHA-1 block.
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn test_sha1_8way(
+        candidates: &[&[u8]],
+        target_words: [u32; 5],
+    ) -> Option<usize> {
+        let count = candidates.len().min(8);
+        if count == 0 { return None; }
+
+        // SHA-1 initial state
+        let h0i = 0x67452301u32;
+        let h1i = 0xefcdab89u32;
+        let h2i = 0x98badcfeu32;
+        let h3i = 0x10325476u32;
+        let h4i = 0xc3d2e1f0u32;
+
+        macro_rules! rotl_sha1 {
+            ($x:expr, $s:expr) => {
+                _mm256_or_si256(
+                    _mm256_slli_epi32($x, $s),
+                    _mm256_srli_epi32($x, 32 - $s),
+                )
+            };
+        }
+
+        // Build padded blocks
+        let mut raw_words = [[0u32; 16]; 8];
+        for lane in 0..count {
+            let cand = candidates[lane];
+            if cand.len() > 55 { return None; }
+            let mut block = [0u8; 64];
+            block[..cand.len()].copy_from_slice(cand);
+            block[cand.len()] = 0x80;
+            let bit_len = (cand.len() as u64) * 8;
+            block[56..64].copy_from_slice(&bit_len.to_be_bytes());
+            for w in 0..16 {
+                raw_words[lane][w] = u32::from_be_bytes([
+                    block[w * 4], block[w * 4 + 1], block[w * 4 + 2], block[w * 4 + 3],
+                ]);
+            }
+        }
+
+        // Transpose into 16 registers
+        let mut w = [_mm256_setzero_si256(); 16];
+        for i in 0..16 {
+            w[i] = _mm256_setr_epi32(
+                raw_words[0][i] as i32, raw_words[1][i] as i32,
+                raw_words[2][i] as i32, raw_words[3][i] as i32,
+                raw_words[4][i] as i32, raw_words[5][i] as i32,
+                raw_words[6][i] as i32, raw_words[7][i] as i32,
+            );
+        }
+
+        // Extend schedule W[16..79]
+        let mut ws = [_mm256_setzero_si256(); 80];
+        for i in 0..16usize { ws[i] = w[i]; }
+        for i in 16..80usize {
+            let x = _mm256_xor_si256(
+                _mm256_xor_si256(ws[i-3], ws[i-8]),
+                _mm256_xor_si256(ws[i-14], ws[i-16]),
+            );
+            ws[i] = rotl_sha1!(x, 1);
+        }
+
+        let mut a = _mm256_set1_epi32(h0i as i32);
+        let mut b = _mm256_set1_epi32(h1i as i32);
+        let mut c = _mm256_set1_epi32(h2i as i32);
+        let mut d = _mm256_set1_epi32(h3i as i32);
+        let mut e = _mm256_set1_epi32(h4i as i32);
+
+        for i in 0..80usize {
+            let (f, k) = if i < 20 {
+                // Ch
+                let f = _mm256_xor_si256(
+                    _mm256_and_si256(b, c),
+                    _mm256_andnot_si256(b, d),
+                );
+                (f, 0x5a827999u32)
+            } else if i < 40 {
+                // Parity
+                let f = _mm256_xor_si256(_mm256_xor_si256(b, c), d);
+                (f, 0x6ed9eba1u32)
+            } else if i < 60 {
+                // Maj
+                let f = _mm256_xor_si256(
+                    _mm256_xor_si256(
+                        _mm256_and_si256(b, c),
+                        _mm256_and_si256(b, d),
+                    ),
+                    _mm256_and_si256(c, d),
+                );
+                (f, 0x8f1bbcdcu32)
+            } else {
+                // Parity
+                let f = _mm256_xor_si256(_mm256_xor_si256(b, c), d);
+                (f, 0xca62c1d6u32)
+            };
+            let temp = _mm256_add_epi32(
+                _mm256_add_epi32(
+                    _mm256_add_epi32(rotl_sha1!(a, 5), f),
+                    _mm256_add_epi32(e, _mm256_set1_epi32(k as i32)),
+                ),
+                ws[i],
+            );
+            e = d;
+            d = c;
+            c = rotl_sha1!(b, 30);
+            b = a;
+            a = temp;
+        }
+
+        a = _mm256_add_epi32(a, _mm256_set1_epi32(h0i as i32));
+        b = _mm256_add_epi32(b, _mm256_set1_epi32(h1i as i32));
+        c = _mm256_add_epi32(c, _mm256_set1_epi32(h2i as i32));
+        d = _mm256_add_epi32(d, _mm256_set1_epi32(h3i as i32));
+        e = _mm256_add_epi32(e, _mm256_set1_epi32(h4i as i32));
+
+        let regs = [a, b, c, d, e];
+        for lane in 0..count {
+            let mut digest = [0u32; 5];
+            for (wi, reg) in regs.iter().enumerate() {
+                let mut tmp = [0i32; 8];
+                _mm256_storeu_si256(tmp.as_mut_ptr() as *mut __m256i, *reg);
+                digest[wi] = tmp[lane] as u32;
+            }
+            if digest == target_words {
+                return Some(lane);
+            }
+        }
+        None
+    }
 }
 
 /// Parse a 32-character hex string into four 32-bit little-endian words (standard MD5 / NTLM order).
@@ -434,6 +738,30 @@ pub fn parse_hex_words_32(hex: &str) -> Option<[u32; 4]> {
         words[i] = u32::from_le_bytes(b);
     }
     Some(words)
+}
+
+/// Parse a 64-character hex string into eight 32-bit big-endian words (SHA-256 digest).
+pub fn parse_hex_words_64(hex: &str) -> Option<[u32; 8]> {
+    if hex.len() != 64 { return None; }
+    let bytes = hex.as_bytes();
+    let mut out = [0u32; 8];
+    for i in 0..8 {
+        let s = std::str::from_utf8(&bytes[i*8..(i+1)*8]).ok()?;
+        out[i] = u32::from_str_radix(s, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// Parse a 40-character hex string into five 32-bit big-endian words (SHA-1 digest).
+pub fn parse_hex_words_40(hex: &str) -> Option<[u32; 5]> {
+    if hex.len() != 40 { return None; }
+    let bytes = hex.as_bytes();
+    let mut out = [0u32; 5];
+    for i in 0..5 {
+        let s = std::str::from_utf8(&bytes[i*8..(i+1)*8]).ok()?;
+        out[i] = u32::from_str_radix(s, 16).ok()?;
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -508,6 +836,36 @@ mod tests {
                     let hit_none = avx2::test_ntlm_8way(&candidates, bad_target);
                     assert_eq!(hit_none, None, "Should not detect non-matching target");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn test_sha256_8way_vector() {
+        // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        let target = parse_hex_words_64(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ).unwrap();
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            if is_x86_feature_detected!("avx2") {
+                let cands: &[&[u8]] = &[b"wrong1", b"wrong2", b"", b"wrong4"];
+                assert_eq!(avx2::test_sha256_8way(cands, target), Some(2));
+            }
+        }
+    }
+
+    #[test]
+    fn test_sha1_8way_vector() {
+        // SHA-1("") = da39a3ee5e6b4b0d3255bfef95601890afd80709
+        let target = parse_hex_words_40(
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        ).unwrap();
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            if is_x86_feature_detected!("avx2") {
+                let cands: &[&[u8]] = &[b"nope", b"", b"also_nope"];
+                assert_eq!(avx2::test_sha1_8way(cands, target), Some(1));
             }
         }
     }

@@ -41,23 +41,39 @@ fn render_host_card(frame: &mut Frame, area: Rect, app: &AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let rows_data: &[(&str, &str, Color)] = &[
-        ("Operating System", &app.sys_os,      Color::White),
-        ("Architecture",     &app.sys_arch,    Color::Cyan),
-        ("Host CPU Processor", &app.sys_cpu,   Color::Yellow),
-        ("Active Threads",   "12 Worker Cores (100% Saturation)", Color::Green),
-        ("Memory Subsystem", "32.0 GB DDR4 (Low Latency DMA)", Color::White),
-        ("Compiler Engine",  &app.sys_rustc,   Color::Indexed(214)),
-        ("Vector SIMD",      "AVX2 + FMA3 (256-bit Vector Lanes)", Color::Green),
-        ("Binary Path",      "torcrypt-tui (Optimized Native)", Color::Cyan),
+    let rows_data: Vec<(String, String, Color)> = vec![
+        ("Operating System".into(),    app.sys_os.clone(),    Color::White),
+        ("Architecture".into(),        app.sys_arch.clone(),  Color::Cyan),
+        ("Host CPU Processor".into(),  app.sys_cpu.clone(),   Color::Yellow),
+        (
+            "Active Threads".into(),
+            format!("{} Worker Threads (Active)", app.thread_count),
+            Color::Green,
+        ),
+        (
+            "Memory Subsystem".into(),
+            format!("{:.1} GB RAM ({:.1} GB used)", app.ram_total_gb, app.ram_used_gb),
+            Color::White,
+        ),
+        ("Compiler Engine".into(),     app.sys_rustc.clone(), Color::Indexed(214)),
+        (
+            "Vector SIMD".into(),
+            if app.avx2 {
+                "AVX2 + FMA3 (256-bit Vector Lanes)".into()
+            } else {
+                "Portable Scalar (No AVX2 Detected)".into()
+            },
+            Color::Green,
+        ),
+        ("Binary Path".into(), "torcrypt-tui (Optimized Native)".into(), Color::Cyan),
     ];
 
     let rows: Vec<Row> = rows_data
         .iter()
         .map(|(k, v, c)| {
             Row::new(vec![
-                Cell::from(*k).style(theme::style_subtext()),
-                Cell::from(*v).style(Style::default().fg(*c).add_modifier(Modifier::BOLD)),
+                Cell::from(k.as_str()).style(theme::style_subtext()),
+                Cell::from(v.as_str()).style(Style::default().fg(*c).add_modifier(Modifier::BOLD)),
             ])
         })
         .collect();
@@ -74,7 +90,11 @@ fn render_gpu_card(frame: &mut Frame, area: Rect, app: &AppState) {
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
             Span::styled("DISCRETE GPU ACCELERATOR", theme::style_title()),
-            Span::styled("  [HARDWARE ACCELERATED ✔] ", theme::style_neon()),
+            if app.sys_gpu_available {
+                Span::styled(" [HARDWARE ACCELERATED ✔] ", theme::style_neon())
+            } else {
+                Span::styled(" [CPU EXECUTION] ", theme::style_amber())
+            },
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -92,23 +112,55 @@ fn render_gpu_card(frame: &mut Frame, area: Rect, app: &AppState) {
         ("CPU Fallback Active", Color::Yellow)
     };
 
-    let rows_data: &[(&str, &str, Color)] = &[
-        ("Detected GPU",     &app.sys_gpu_name,  Color::Green),
-        ("Stream Processors", &app.sys_gpu_cores, Color::Cyan),
-        ("Dedicated VRAM",   &app.sys_gpu_vram,  Color::Yellow),
-        ("Compute Status",   gpu_status.0,       gpu_status.1),
-        ("Offload Strategy", "Dynamic (GPU Primary for Hashes / Hybrid for KDF)", Color::White),
-        ("DMA Transfer",     "PCIe 4.0 x8 Direct Memory Access (0 Latency)", Color::Cyan),
-        ("WPA2 Handshakes",  "~520,000 Hashes/sec (RTX Accelerated)", Color::Green),
-        ("AES / NTLM Cracking", "~18,450 MB/s Throughput Pipeline", Color::Green),
+    let rows_data: Vec<(String, String, Color)> = vec![
+        ("Detected GPU".into(),      app.sys_gpu_name.clone(),  Color::Green),
+        ("Stream Processors".into(), app.sys_gpu_cores.clone(), Color::Cyan),
+        ("Dedicated VRAM".into(),    app.sys_gpu_vram.clone(),  Color::Yellow),
+        ("Compute Status".into(),    gpu_status.0.into(),       gpu_status.1),
+        (
+            "Offload Strategy".into(),
+            if app.sys_gpu_available {
+                "GPU Primary / Hybrid KDF Fallback".into()
+            } else {
+                "Native CPU SIMD (No GPU Offload)".into()
+            },
+            if app.sys_gpu_available { Color::White } else { Color::Yellow },
+        ),
+        (
+            "DMA Transfer".into(),
+            if app.sys_gpu_available {
+                "PCIe Direct Memory Access (Hardware)".into()
+            } else {
+                "System RAM Only (No PCIe)".into()
+            },
+            if app.sys_gpu_available { Color::Cyan } else { Color::Indexed(240) },
+        ),
+        (
+            "WPA2 Throughput".into(),
+            if app.sys_gpu_available {
+                "GPU Accelerated (see benchmark tab)".into()
+            } else {
+                "CPU PBKDF2-SHA1 (see benchmark tab)".into()
+            },
+            if app.sys_gpu_available { Color::Green } else { Color::Yellow },
+        ),
+        (
+            "Hash Pipeline".into(),
+            if app.sys_gpu_available {
+                "OpenCL/CUDA hardware pipeline".into()
+            } else {
+                "AVX2 8-way SIMD (CPU only)".into()
+            },
+            if app.sys_gpu_available { Color::Green } else { Color::Yellow },
+        ),
     ];
 
     let rows: Vec<Row> = rows_data
         .iter()
         .map(|(k, v, c)| {
             Row::new(vec![
-                Cell::from(*k).style(theme::style_subtext()),
-                Cell::from(*v).style(Style::default().fg(*c).add_modifier(Modifier::BOLD)),
+                Cell::from(k.as_str()).style(theme::style_subtext()),
+                Cell::from(v.as_str()).style(Style::default().fg(*c).add_modifier(Modifier::BOLD)),
             ])
         })
         .collect();
@@ -145,13 +197,21 @@ fn render_crypto_flags(frame: &mut Frame, area: Rect, app: &AppState) {
         ("RDRAND Hardware Entropy", app.rdrand,          "On-die DRNG — cryptographically secure random numbers"),
     ];
 
-    let flags_right: &[(&str, &str, Color)] = &[
-        ("WPA2/WPA3 Strategy",   "GPU Primary (98% GPU / 2% CPU Stream)",   Color::Green),
-        ("ZIP / RAR / PDF",      "GPU Primary (3,072 Parallel Threads)",    Color::Green),
-        ("Argon2id / Scrypt KDF","Hybrid Split (Ryzen 5600 + RTX 4060)",     Color::Cyan),
-        ("Small Chunk Fallback", "CPU SIMD Vectorized (0 PCIe Overhead)",    Color::Yellow),
-        ("Key Safety Storage",   "Locked mmap memory buffers (zero swap)",  Color::White),
-        ("Session Storage",      "SQLite3 WAL Batching (Zero Contention)",  Color::Yellow),
+    let flags_right: Vec<(String, String, Color)> = vec![
+        ("WPA2/WPA3 Strategy".into(),   "GPU Primary (98% GPU / 2% CPU Stream)".into(),   Color::Green),
+        ("ZIP / RAR / PDF".into(),      "GPU Primary (3,072 Parallel Threads)".into(),    Color::Green),
+        (
+            "Argon2id / Scrypt KDF".into(),
+            if app.sys_gpu_available {
+                "GPU Hybrid (PBKDF2 host + GPU verify)".into()
+            } else {
+                "CPU-Only (PBKDF2 single-threaded KDF)".into()
+            },
+            Color::Cyan,
+        ),
+        ("Small Chunk Fallback".into(), "CPU SIMD Vectorized (0 PCIe Overhead)".into(),    Color::Yellow),
+        ("Key Safety Storage".into(),   "Locked mmap memory buffers (zero swap)".into(),  Color::White),
+        ("Session Storage".into(),      "SQLite3 WAL Batching (Zero Contention)".into(),  Color::Yellow),
     ];
 
     let left_rows: Vec<Row> = flags_left
@@ -190,8 +250,8 @@ fn render_crypto_flags(frame: &mut Frame, area: Rect, app: &AppState) {
         .iter()
         .map(|(k, v, c)| {
             Row::new(vec![
-                Cell::from(*k).style(theme::style_subtext()),
-                Cell::from(*v).style(Style::default().fg(*c).add_modifier(Modifier::BOLD)),
+                Cell::from(k.as_str()).style(theme::style_subtext()),
+                Cell::from(v.as_str()).style(Style::default().fg(*c).add_modifier(Modifier::BOLD)),
             ])
         })
         .collect();

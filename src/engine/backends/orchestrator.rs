@@ -49,6 +49,7 @@ impl BackendJob {
         extractor_bin: Option<&Path>,
         wordlist:      Option<&Path>,
         candidates:    Option<Vec<String>>,
+        cipher_desc:   Option<&str>,
     ) -> Result<Self, String> {
         // 1. Prioritize in-process extraction to avoid external tool dependencies
         let (actual_target, temp_hash_file) = if let Some(hash_str) = crate::engine::extractors::format_archive_hash(target_path) {
@@ -84,8 +85,15 @@ impl BackendJob {
                 // Configure Hashcat arguments
                 cmd.arg("--status")
                     .arg("--status-timer=1")
-                    .arg("--machine-readable")
-                    .arg(&actual_target);
+                    .arg("--machine-readable");
+
+                if let Some(desc) = cipher_desc {
+                    if let Some(mode) = super::detector::hashcat_mode_for(desc) {
+                        cmd.arg("-m").arg(mode.to_string());
+                    }
+                }
+
+                cmd.arg(&actual_target);
 
                 if let Some(w) = wordlist {
                     cmd.arg(w);

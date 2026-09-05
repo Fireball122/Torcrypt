@@ -348,7 +348,7 @@ impl DecryptionWorker {
                     let extractor_bin = self.backend_catalog.find_extractor_for(target_p);
                     let wl_arg = req.wordlist_path.as_deref().map(Path::new);
 
-                    match BackendJob::launch(backend_type, bin, target_p, extractor_bin, wl_arg, cand_sample) {
+                    match BackendJob::launch(backend_type, bin, target_p, extractor_bin, wl_arg, cand_sample, None) {
                         Ok(job) => {
                             self.active_backend = Some(job);
                             let _ = self.tel_tx.send(TelemetryEvent::Log {
