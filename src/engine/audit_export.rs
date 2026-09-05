@@ -94,8 +94,8 @@ mod tests {
             entropy: 7.92,
             magic_header: "PK 03 04".into(),
             recommended_attack: "Leveled Wordlist".into(),
-            recommended_engine: ComputeEngine::GpuPrimary,
-            ready_to_crack: true,
+            recommended_engine: ComputeEngine::CpuSimd,
+            ready_to_crack: true,  // ZIP with known verifier: acceptable in test
         };
 
         let temp_dir = std::env::temp_dir();

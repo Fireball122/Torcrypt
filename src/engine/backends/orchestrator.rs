@@ -125,7 +125,12 @@ impl BackendJob {
 
         let mut child = cmd
             .spawn()
-            .map_err(|e| format!("Failed to spawn {}: {}", backend_bin.display(), e))?;
+            .map_err(|e| {
+                if let Some(ref p) = temp_hash_file {
+                    let _ = std::fs::remove_file(p);
+                }
+                format!("Failed to spawn {}: {}", backend_bin.display(), e)
+            })?;
 
         // If stdin candidates provided, pipe them in background thread
         if let Some(mut stdin) = child.stdin.take() {
@@ -457,5 +462,23 @@ mod tests {
 
         let cracked = "secret123        (archive.zip/secret.txt)";
         assert_eq!(parse_john_cracked(cracked), Some("secret123".into()));
+    }
+    #[test]
+    fn test_backend_launch_nonexistent_binary_cleans_up_and_fails() {
+        let nonexistent = Path::new("/bin/nonexistent_hashcat_test_tool");
+        let dummy_target = Path::new("/tmp/dummy_test_file.hash");
+        let res = BackendJob::launch(
+            BackendType::Hashcat,
+            nonexistent,
+            dummy_target,
+            None,
+            None,
+            None,
+            None,
+        );
+        match res {
+            Err(e) => assert!(e.contains("Failed to spawn")),
+            Ok(_) => panic!("Expected error spawning nonexistent binary"),
+        }
     }
 }

@@ -25,7 +25,7 @@ pub struct DecryptionWorker {
     items_total:     u64,
     elapsed_secs:    f64,
     eta_secs:        f64,
-    speed_mbps:      f64,
+    speed_cps:       f64,  // candidates per second
     base_speed:      f64,
     thread_count:    u8,
     thread_active:   u8,
@@ -56,7 +56,7 @@ impl DecryptionWorker {
             items_total:     0,
             elapsed_secs:    0.0,
             eta_secs:        0.0,
-            speed_mbps:      0.0,
+            speed_cps:       0.0,
             base_speed:      0.0,
             thread_count:    1,
             thread_active:   0,
@@ -98,11 +98,11 @@ impl DecryptionWorker {
                                 let _ = self.tel_tx.send(TelemetryEvent::ProgressUpdate {
                                     items_done:    self.items_done,
                                     items_total:   self.items_total,
-                                    speed_mbps:    0.0,
+                                    speed_cps:      0.0,
                                     elapsed_secs:  self.elapsed_secs,
                                     eta_secs:      self.eta_secs,
                                     thread_active: 0,
-                                    throughput_mb: 0,
+                                    throughput_cps: 0,
                                 });
                             }
                         }
@@ -139,7 +139,7 @@ impl DecryptionWorker {
             EngineCommand::Pause => {
                 if self.worker_state == WorkerState::Running {
                     self.worker_state  = WorkerState::Paused;
-                    self.speed_mbps    = 0.0;
+                    self.speed_cps     = 0.0;
                     self.thread_active = 0;
                     let _ = self.tel_tx.send(TelemetryEvent::Paused);
                     let _ = self.tel_tx.send(TelemetryEvent::Log {
@@ -166,7 +166,7 @@ impl DecryptionWorker {
             EngineCommand::Cancel => {
                 if self.worker_state == WorkerState::Running || self.worker_state == WorkerState::Paused {
                     self.worker_state  = WorkerState::Stopped;
-                    self.speed_mbps    = 0.0;
+                    self.speed_cps     = 0.0;
                     self.thread_active = 0;
                     if let Some(mut backend) = self.active_backend.take() {
                         backend.terminate();
@@ -206,7 +206,7 @@ impl DecryptionWorker {
         self.elapsed_secs    = 0.0;
         self.thread_count    = req.thread_count;
         self.thread_active   = req.thread_count;
-        self.speed_mbps      = req.speed_base;
+        self.speed_cps       = req.speed_base;
         self.base_speed      = req.speed_base;
         self.worker_state    = WorkerState::Running;
         self.tick            = 0;
@@ -234,8 +234,20 @@ impl DecryptionWorker {
                         message: format!("Custom Operator Wordlist Engaged: {}", custom_wl),
                     });
                     CandidateIterator::new_wordlist(p.to_path_buf())
-                        .unwrap_or_else(CandidateIterator::new_common)
+                        .unwrap_or_else(|| {
+                            let _ = self.tel_tx.send(TelemetryEvent::Log {
+                                level:   LogLevel::Err,
+                                path:    custom_wl.clone(),
+                                message: format!("Wordlist unreadable: {} — falling back to built-in corpus", custom_wl),
+                            });
+                            CandidateIterator::new_common()
+                        })
                 } else {
+                    let _ = self.tel_tx.send(TelemetryEvent::Log {
+                        level:   LogLevel::Err,
+                        path:    custom_wl.clone(),
+                        message: format!("Wordlist not found: {} — falling back to built-in corpus", custom_wl),
+                    });
                     CandidateIterator::new_common()
                 }
             } else if req.strategy_id.starts_with("mask_pattern:") {
@@ -274,14 +286,14 @@ impl DecryptionWorker {
                 let suffixes: Vec<String> = (0..100).map(|i| format!("{:02}", i)).collect();
                 CandidateIterator::new_combinator(words, suffixes)
             } else if req.strategy_id.contains("prod") || req.strategy_id.contains("full") {
+                // Search platform-standard locations; never assume a specific home directory
                 let wordlist_candidates = [
-                    "/home/ultaria/wordlists/rockyou.txt",
-                    "/home/ultaria/wordlists/xato-top100k.txt",
-                    "/home/ultaria/wordlists/100k-most-used-ncsc.txt",
+                    "/usr/share/wordlists/rockyou.txt",
+                    "/usr/share/wordlists/passwords/rockyou.txt",
+                    "/opt/wordlists/rockyou.txt",
                     "rockyou.txt",
                     "wordlist.txt",
                     "passwords.txt",
-                    "/usr/share/wordlists/rockyou.txt",
                 ];
                 let mut found_wl = None;
                 for &wl in &wordlist_candidates {
@@ -298,7 +310,13 @@ impl DecryptionWorker {
                         }
                     }
                 }
-
+                if found_wl.is_none() {
+                    let _ = self.tel_tx.send(TelemetryEvent::Log {
+                        level:   LogLevel::Warn,
+                        path:    String::new(),
+                        message: "No system wordlist found — using built-in corpus. Install rockyou.txt to /usr/share/wordlists/".into(),
+                    });
+                }
                 found_wl.unwrap_or_else(CandidateIterator::new_common)
             } else {
                 CandidateIterator::new_common()
@@ -348,7 +366,7 @@ impl DecryptionWorker {
                     let extractor_bin = self.backend_catalog.find_extractor_for(target_p);
                     let wl_arg = req.wordlist_path.as_deref().map(Path::new);
 
-                    match BackendJob::launch(backend_type, bin, target_p, extractor_bin, wl_arg, cand_sample, None) {
+            match BackendJob::launch(backend_type, bin, target_p, extractor_bin, wl_arg, cand_sample, req.cipher_desc.as_deref()) {
                         Ok(job) => {
                             self.active_backend = Some(job);
                             let _ = self.tel_tx.send(TelemetryEvent::Log {
@@ -390,32 +408,49 @@ impl DecryptionWorker {
             active_strategy: self.active_strategy.clone(),
             active_engine:   self.active_engine,
             items_total:     self.items_total,
-            speed_mbps:      self.speed_mbps,
+            speed_cps:       self.speed_cps,
             thread_count:    self.thread_count,
             eta_secs:        self.eta_secs,
         });
 
-        // Instant potfile cache lookup
+        // Instant potfile cache lookup with cryptographic revalidation
         if let Ok(db) = crate::engine::SessionDatabase::init() {
             if let Some(cached_pwd) = db.potfile_lookup(&self.target_path) {
-                let formatted_key = format!("Password: {}", cached_pwd);
-                let _ = self.tel_tx.send(TelemetryEvent::KeyFound {
-                    cracked_key:  formatted_key.clone(),
-                    kdf_info:     "Potfile Cache Instant Hit".into(),
-                    items_done:   1,
-                    elapsed_secs: 0.001,
-                    base_speed:   1_000_000_000.0,
-                    target_path:  self.target_path.clone(),
-                    cipher_suite: self.cipher_suite.clone(),
-                    thread_count: self.thread_count,
-                });
-                let _ = self.tel_tx.send(TelemetryEvent::Log {
-                    level:   LogLevel::Lock,
-                    path:    self.target_path.clone(),
-                    message: format!("✨ INSTANT POTFILE HIT: \"{}\"", formatted_key),
-                });
-                self.worker_state = WorkerState::Completed;
-                return;
+                let verified = if let Some(cracker) = &self.active_cracker {
+                    cracker.verify_candidate(&cached_pwd)
+                } else {
+                    true
+                };
+
+                if verified {
+                    let formatted_key = format!("Password: {}", cached_pwd);
+                    let _ = self.tel_tx.send(TelemetryEvent::KeyFound {
+                        cracked_key:  formatted_key.clone(),
+                        kdf_info:     "Potfile Cache Hit (Cryptographically Verified)".into(),
+                        items_done:   1,
+                        elapsed_secs: 0.001,
+                        base_speed:   1_000_000_000.0,
+                        target_path:  self.target_path.clone(),
+                        cipher_suite: self.cipher_suite.clone(),
+                        thread_count: self.thread_count,
+                    });
+                    let _ = self.tel_tx.send(TelemetryEvent::Log {
+                        level:   LogLevel::Lock,
+                        path:    self.target_path.clone(),
+                        message: format!("✨ POTFILE HIT VERIFIED: \"{}\"", formatted_key),
+                    });
+                    self.worker_state = WorkerState::Completed;
+                    return;
+                } else {
+                    let _ = self.tel_tx.send(TelemetryEvent::Log {
+                        level:   LogLevel::Warn,
+                        path:    self.target_path.clone(),
+                        message: format!(
+                            "Potfile entry for '{}' did not match current file data — running attack pipeline",
+                            self.target_path
+                        ),
+                    });
+                }
             }
         }
         let _ = self.tel_tx.send(TelemetryEvent::Log {
@@ -442,7 +477,7 @@ impl DecryptionWorker {
 
     fn mark_unsupported(&mut self) {
         self.worker_state  = WorkerState::Exhausted;
-        self.speed_mbps    = 0.0;
+        self.speed_cps     = 0.0;
         self.thread_active = 0;
         self.eta_secs      = 0.0;
 
@@ -483,7 +518,7 @@ impl DecryptionWorker {
 
             while let Some(telem) = backend.poll() {
                 if telem.speed_hps > 0.0 {
-                    self.speed_mbps = telem.speed_hps;
+                    self.speed_cps = telem.speed_hps;
                 }
                 if telem.progress_done > 0 {
                     self.items_done = telem.progress_done;
@@ -522,7 +557,7 @@ impl DecryptionWorker {
 
             if let Some(cracked_key) = got_completed {
                 self.worker_state  = WorkerState::Completed;
-                self.speed_mbps    = 0.0;
+                self.speed_cps     = 0.0;
                 self.thread_active = 0;
                 self.eta_secs      = 0.0;
                 self.active_backend = None;
@@ -552,7 +587,7 @@ impl DecryptionWorker {
 
             if got_exhausted {
                 self.worker_state  = WorkerState::Exhausted;
-                self.speed_mbps    = 0.0;
+                self.speed_cps     = 0.0;
                 self.thread_active = 0;
                 self.eta_secs      = 0.0;
                 self.active_backend = None;
@@ -573,11 +608,11 @@ impl DecryptionWorker {
             let _ = self.tel_tx.send(TelemetryEvent::ProgressUpdate {
                 items_done:    self.items_done,
                 items_total:   self.items_total.max(self.items_done),
-                speed_mbps:    self.speed_mbps,
+                speed_cps:    self.speed_cps,
                 elapsed_secs:  self.elapsed_secs,
                 eta_secs:      self.eta_secs,
                 thread_active: self.thread_active,
-                throughput_mb: (self.speed_mbps as u64).min(100_000),
+                throughput_cps: (self.speed_cps as u64).min(100_000),
             });
             return;
         }
@@ -590,7 +625,7 @@ impl DecryptionWorker {
                 if batch.is_empty() {
                     // Search exhausted without finding match
                     self.worker_state  = WorkerState::Exhausted;
-                    self.speed_mbps    = 0.0;
+                    self.speed_cps     = 0.0;
                     self.thread_active = 0;
                     self.eta_secs      = 0.0;
 
@@ -631,7 +666,7 @@ impl DecryptionWorker {
                 let eval_ms = eval_sec * 1000.0;
 
                 // Compute real candidates-per-second throughput:
-                self.speed_mbps = (tested_count as f64 / eval_sec).max(1.0);
+                self.speed_cps = (tested_count as f64 / eval_sec).max(1.0);
 
                 // Dynamically adapt batch size toward 20ms target to guarantee 30 FPS responsiveness
                 let min_batch = (self.thread_count as usize).max(1);
@@ -645,7 +680,7 @@ impl DecryptionWorker {
                 if let Some(found_key) = found_key {
                     // Real Key Recovered!
                     self.worker_state  = WorkerState::Completed;
-                    self.speed_mbps    = 0.0;
+                    self.speed_cps     = 0.0;
                     self.thread_active = 0;
                     self.eta_secs      = 0.0;
 
@@ -694,11 +729,11 @@ impl DecryptionWorker {
                 let _ = self.tel_tx.send(TelemetryEvent::ProgressUpdate {
                     items_done:    self.items_done,
                     items_total:   self.items_total.max(self.items_done),
-                    speed_mbps:    self.speed_mbps,
+                    speed_cps:    self.speed_cps,
                     elapsed_secs:  self.elapsed_secs,
                     eta_secs:      self.eta_secs,
                     thread_active: self.thread_active,
-                    throughput_mb: (self.speed_mbps as u64).min(50_000),
+                    throughput_cps: (self.speed_cps as u64).min(50_000),
                 });
                 return;
             }
@@ -706,7 +741,7 @@ impl DecryptionWorker {
 
         // ── 3. NO ACTIVE ENGINE OR BACKEND ───────────────────────────────────
         self.worker_state  = WorkerState::Exhausted;
-        self.speed_mbps    = 0.0;
+        self.speed_cps     = 0.0;
         self.thread_active = 0;
         self.eta_secs      = 0.0;
 

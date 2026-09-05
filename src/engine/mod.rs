@@ -172,6 +172,7 @@ mod tests {
             thread_count:   4,
             wordlist_path:  None,
             start_offset:   0,
+            cipher_desc:    Some("ZipCrypto Standard".into()),
         };
 
         engine.send(EngineCommand::StartAttack(req));
@@ -220,6 +221,7 @@ mod tests {
             thread_count:   4,
             wordlist_path:  None,
             start_offset:   0,
+            cipher_desc:    Some("ZipCrypto Standard".into()),
         };
 
         engine.send(EngineCommand::StartAttack(req));
@@ -263,6 +265,7 @@ mod tests {
             thread_count:   2,
             wordlist_path:  None,
             start_offset:   0,
+            cipher_desc:    Some("MD5 Digest".into()),
         };
 
         engine.send(EngineCommand::StartAttack(req));
@@ -328,6 +331,7 @@ mod tests {
             thread_count:   4,
             wordlist_path:  None,
             start_offset:   0,
+            cipher_desc:    Some("MD5 Digest".into()),
         };
 
         engine.send(EngineCommand::StartAttack(req));

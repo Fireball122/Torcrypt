@@ -217,6 +217,39 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
                 if a.is_encrypted { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() }),
         ]),
         Line::from(vec![
+            Span::styled("  Execution Route: ", theme::style_subtext()),
+            Span::styled(
+                if !a.is_encrypted {
+                    "INSPECTION ONLY (No password required)"
+                } else if a.ready_to_crack {
+                    if a.lock_type.contains("ZipCrypto")
+                        || a.lock_type.contains("WinZip")
+                        || a.lock_type.contains("PDF")
+                        || a.lock_type.contains("RAR5")
+                        || a.lock_type.contains("7-Zip")
+                        || a.lock_type.contains("KeePass")
+                        || a.lock_type.contains("MD5")
+                        || a.lock_type.contains("SHA-1")
+                        || a.lock_type.contains("SHA-256")
+                        || a.lock_type.contains("NTLM")
+                    {
+                        "✔ NATIVE VERIFIED (In-process cryptographic engine)"
+                    } else {
+                        "⚙ EXTERNAL DELEGATION (Hashcat / John the Ripper)"
+                    }
+                } else {
+                    "✖ NOT CRACKABLE IN-PROCESS (Requires external extractor tool)"
+                },
+                if !a.is_encrypted {
+                    Style::default().fg(Color::DarkGray)
+                } else if a.ready_to_crack {
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                },
+            ),
+        ]),
+        Line::from(vec![
             Span::styled("  Auto-Router   : ", theme::style_subtext()),
             Span::styled(engine_badge.0, Style::default().fg(engine_badge.1).add_modifier(Modifier::BOLD)),
         ]),
@@ -226,8 +259,7 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
     ];
 
     let content_layout = Layout::vertical([
-        Constraint::Length(7), // Metadata lines
-        Constraint::Length(1), // Entropy Gauge Bar
+        Constraint::Length(8), // Metadata lines (8 rows)
         Constraint::Min(0),
     ])
     .split(inner);

@@ -527,6 +527,7 @@ impl AppState {
             thread_count:    self.thread_count,
             wordlist_path:   self.custom_wordlist.as_ref().map(|p| p.to_string_lossy().to_string()),
             start_offset:    0,
+            cipher_desc:     Some(self.analysis.lock_type.clone()),
         };
 
         self.target_path       = req.target_path.clone();
@@ -565,6 +566,7 @@ impl AppState {
             thread_count:    self.thread_count,
             wordlist_path:   None,
             start_offset:    0,
+            cipher_desc:     Some(self.analysis.lock_type.clone()),
         };
 
         self.target_path       = req.target_path.clone();
@@ -614,6 +616,7 @@ impl AppState {
             thread_count:    self.thread_count,
             wordlist_path:   self.custom_wordlist.as_ref().map(|p| p.to_string_lossy().to_string()),
             start_offset:    offset,
+            cipher_desc:     Some(self.analysis.lock_type.clone()),
         };
 
         self.target_path       = req.target_path.clone();
@@ -646,7 +649,7 @@ impl AppState {
                 active_strategy,
                 active_engine,
                 items_total,
-                speed_mbps,
+                speed_cps,
                 thread_count,
                 eta_secs,
             } => {
@@ -656,7 +659,7 @@ impl AppState {
                 self.active_engine   = active_engine;
                 self.items_total     = items_total;
                 self.items_done      = 0;
-                self.speed_mbps      = speed_mbps;
+                self.speed_mbps      = speed_cps;
                 self.thread_count    = thread_count;
                 self.thread_active   = thread_count;
                 self.eta_secs        = eta_secs;
@@ -666,20 +669,20 @@ impl AppState {
             TelemetryEvent::ProgressUpdate {
                 items_done,
                 items_total,
-                speed_mbps,
+                speed_cps,
                 elapsed_secs,
                 eta_secs,
                 thread_active,
-                throughput_mb,
+                throughput_cps,
             } => {
                 self.items_done    = items_done;
                 self.items_total   = items_total;
-                self.speed_mbps    = speed_mbps;
+                self.speed_mbps    = speed_cps;
                 self.elapsed_secs  = elapsed_secs;
                 self.eta_secs      = eta_secs;
                 self.thread_active = thread_active;
-                if throughput_mb > 0 || self.worker_state == WorkerState::Running {
-                    self.push_throughput(throughput_mb);
+                if throughput_cps > 0 || self.worker_state == WorkerState::Running {
+                    self.push_throughput(throughput_cps);
                 }
             }
             TelemetryEvent::KeyFound {
@@ -1623,7 +1626,7 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
                 lock_type: "WPA2 PMKID RSN IE Tag 48 (Hashcat Mode 22000 / 16800)".into(),
                 entropy,
                 magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
-                recommended_attack: "PMKID GPU Compute Recovery (SSID: EnterpriseCorpHQ)".into(),
+                recommended_attack: "Convert with hcxpcapngtool -o out.22000 <file>, then: hashcat -m 22000 out.22000 wordlist".into(),
                 recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
                 ready_to_crack: true,
             };
@@ -1828,7 +1831,7 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             magic_header: if slice.starts_with(b"Salted__") { "53 61 6C 74 65 64 5F 5F (Salted__)".into() } else { hex_header },
             recommended_attack: "openssl enc -d -aes-256-cbc -in <file> -out <out> -pbkdf2 -pass pass:<candidate>".into(),
             recommended_engine: if gpu_available { ComputeEngine::Hybrid } else { ComputeEngine::CpuSimd },
-            ready_to_crack: true,
+            ready_to_crack: false,
         };
     }
 

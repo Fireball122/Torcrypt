@@ -183,7 +183,7 @@ fn render_inspector(frame: &mut Frame, area: Rect, app: &AppState) {
         Line::from(vec![
             Span::styled("  Throughput   : ", theme::style_subtext()),
             Span::styled(
-                if s.speed_mbps > 0.0 { format!("{:.1} MB/s", s.speed_mbps) } else { "—".into() },
+                if s.speed_mbps > 0.0 { format!("{:.0} c/s", s.speed_mbps) } else { "—".into() },
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
         ]),

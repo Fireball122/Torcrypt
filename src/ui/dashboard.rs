@@ -242,7 +242,7 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
     let label_str = match app.active_engine {
         ComputeEngine::GpuPrimary => {
             if app.worker_state == WorkerState::Running {
-                format!("GPU: 100% CUDA (3,072 Cores) │ Host: {} Threads", app.thread_count)
+                format!("GPU ACTIVE │ Host: {} Threads", app.thread_count)
             } else if app.worker_state == WorkerState::Completed {
                 "GPU: COMPLETED │ Workload Finished".into()
             } else if app.worker_state == WorkerState::Exhausted {
@@ -264,7 +264,7 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
         }
         ComputeEngine::CpuSimd => {
             if app.worker_state == WorkerState::Running {
-                format!("{}/{} CPU Cores (AVX2 SIMD Saturation)", app.thread_active, app.thread_count)
+                format!("{}/{} CPU Cores (AVX2 SIMD)", app.thread_active, app.thread_count)
             } else if app.worker_state == WorkerState::Completed {
                 "CPU SIMD: COMPLETED │ Workload Finished".into()
             } else if app.worker_state == WorkerState::Exhausted {
@@ -330,7 +330,12 @@ fn render_cipher_info(frame: &mut Frame, area: Rect, app: &AppState) {
         ]),
         Row::new(vec![
             Cell::from("Acceleration").style(theme::style_subtext()),
-            Cell::from("AES-NI: ACTIVE  │  AVX2: ACTIVE  │  CUDA: READY").style(Style::default().fg(Color::Magenta)),
+            Cell::from(format!(
+                "{}  │  {}  │  GPU: {}",
+                if app.aes_ni  { "AES-NI: ACTIVE" } else { "AES-NI: N/A" },
+                if app.avx2    { "AVX2: ACTIVE"   } else { "AVX2:   N/A" },
+                if app.sys_gpu_available { "READY" } else { "NONE (CPU-only)" },
+            )).style(Style::default().fg(Color::Magenta)),
         ]),
     ];
 
@@ -364,7 +369,7 @@ fn render_throughput_sparkline(frame: &mut Frame, area: Rect, app: &AppState) {
     let title_line = Line::from(vec![
         Span::raw("─ ◈ "),
         Span::styled("REAL-TIME THROUGHPUT ", theme::style_title()),
-        Span::styled(format!("Cur: {} MB/s │ Avg: {} MB/s │ Peak: {} MB/s (60s) ", cur_speed, avg_speed, max_speed), theme::style_subtext()),
+        Span::styled(format!("Cur: {} c/s │ Avg: {} c/s │ Peak: {} c/s (60s) ", cur_speed, avg_speed, max_speed), theme::style_subtext()),
     ]);
 
     let block = Block::default()

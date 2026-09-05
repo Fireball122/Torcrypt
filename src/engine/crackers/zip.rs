@@ -140,4 +140,19 @@ mod tests {
         assert!(target.verify("secret123"));
         assert!(!target.verify("wrongpass"));
     }
+    #[test]
+    fn test_zip_target_real_file_loading_and_dual_check_byte() {
+        let temp_p = std::env::temp_dir().join("torcrypt_zip_dual_check_test.zip");
+        crate::engine::tests::create_test_zip(&temp_p, "realpassword456");
+
+        let target = ZipTarget::load_from_file(&temp_p).expect("Must load valid zip file");
+        assert_eq!(target.check_byte, 0xAA);
+        assert_eq!(target.check_byte2, Some(0x55));
+
+        assert!(target.verify("realpassword456"), "Correct password must verify");
+        assert!(!target.verify("wrongpassword"), "Wrong password must fail");
+        assert!(!target.verify(""), "Empty password must fail");
+
+        let _ = std::fs::remove_file(&temp_p);
+    }
 }

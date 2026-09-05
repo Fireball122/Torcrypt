@@ -17,11 +17,11 @@ pub enum WorkerState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComputeEngine {
-    GpuPrimary, // 95% GPU CUDA / OpenCL + 5% CPU Rule Streaming
-    Hybrid,     // 50% GPU + 50% CPU SIMD (Optimal for Argon2/Scrypt/LUKS)
-    CpuSimd,    // Multi-threaded CPU AVX2/AVX-512 vectorization (Fallback)
-    TlsKeylog,  // TLS 1.3 Ephemeral Master Key Decryption
-    PcapInspect,// Plaintext Protocol Credential Stream Extractor
+    GpuPrimary,   // Discrete GPU via CUDA / OpenCL (verified at runtime)
+    Hybrid,       // 50% GPU + 50% CPU SIMD
+    CpuSimd,      // Multi-threaded CPU AVX2/AVX-512 vectorization
+    TlsKeylog,    // TLS session paired with SSLKEYLOGFILE (inspection-only)
+    PcapInspect,  // Plaintext protocol credential stream (inspection-only)
 }
 
 impl ComputeEngine {
@@ -30,8 +30,8 @@ impl ComputeEngine {
             ComputeEngine::GpuPrimary  => "GPU ACCELERATED (CUDA / OpenCL Primary)",
             ComputeEngine::Hybrid      => "HYBRID PIPELINE (GPU 50% + CPU 50%)",
             ComputeEngine::CpuSimd     => "CPU VECTORIZED (AVX2 / AVX-512 SIMD)",
-            ComputeEngine::TlsKeylog   => "TLS 1.3 STREAM DECRYPTOR (SSLKEYLOGFILE)",
-            ComputeEngine::PcapInspect => "PCAP PROTOCOL CREDENTIAL EXTRACTOR",
+            ComputeEngine::TlsKeylog   => "TLS 1.3 STREAM INSPECTOR (pair SSLKEYLOGFILE)",
+            ComputeEngine::PcapInspect => "PCAP PROTOCOL STREAM INSPECTOR",
         }
     }
 }
@@ -51,7 +51,7 @@ pub enum LogLevel {
 #[derive(Debug, Clone)]
 pub struct AttackRequest {
     pub target_path:     String,
-    pub cipher_suite:    String,
+    pub cipher_suite:    String,   // maps to lock_type from FileAnalysis
     pub active_engine:   ComputeEngine,
     pub strategy_id:     String,
     pub strategy_title:  String,
@@ -61,6 +61,8 @@ pub struct AttackRequest {
     pub thread_count:    u8,
     pub wordlist_path:   Option<String>,
     pub start_offset:    u64,
+    /// Passed into BackendJob::launch so hashcat_mode_for() can select -m <mode>
+    pub cipher_desc:     Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,18 +89,18 @@ pub enum TelemetryEvent {
         active_strategy: String,
         active_engine:   ComputeEngine,
         items_total:     u64,
-        speed_mbps:      f64,
+        speed_cps:       f64,  // candidates per second (was incorrectly named speed_mbps)
         thread_count:    u8,
         eta_secs:        f64,
     },
     ProgressUpdate {
         items_done:      u64,
         items_total:     u64,
-        speed_mbps:      f64,
+        speed_cps:       f64,  // candidates per second
         elapsed_secs:    f64,
         eta_secs:        f64,
         thread_active:   u8,
-        throughput_mb:   u64,
+        throughput_cps:  u64,  // for sparkline history (was throughput_mb)
     },
     KeyFound {
         cracked_key:     String,

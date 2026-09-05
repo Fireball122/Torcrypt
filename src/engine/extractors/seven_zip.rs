@@ -47,7 +47,7 @@ impl SevenZipInspection {
         // Scan for 7zAES Method ID: [0x06, 0xF1, 0x07, 0x01] in header or tail
         let mut is_encrypted = false;
         let mut enc_header = false;
-
+        let mut is_heuristic = false;
         if next_header_offset > 0 && next_header_size > 0 && (32 + next_header_offset) < file_len {
             let actual_hdr_pos = 32 + next_header_offset;
             if file.seek(SeekFrom::Start(actual_hdr_pos)).is_ok() {
@@ -73,11 +73,18 @@ impl SevenZipInspection {
             let _ = file.seek(SeekFrom::Start(file_len - tail_len as u64));
             if file.read_exact(&mut tail).is_ok() && tail.windows(4).any(|w| w == [0x06, 0xF1, 0x07, 0x01]) {
                 is_encrypted = true;
+                is_heuristic = true;
             }
         }
 
         let (kdf_info, summary) = if is_encrypted {
-            let hdr_note = if enc_header { " (Encrypted File List)" } else { "" };
+            let hdr_note = if enc_header {
+                " (Encrypted File List)"
+            } else if is_heuristic {
+                " (Probable / Tail Signature)"
+            } else {
+                ""
+            };
             (
                 "SHA-256 KDF (524,288 rounds, 2^19) + AES-256-CBC".into(),
                 format!("7-Zip AES-256 Encrypted Archive{} (v{}.{})", hdr_note, ver_major, ver_minor),
