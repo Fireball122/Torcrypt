@@ -24,6 +24,52 @@ torcrypt
 dt
 ```
 
+
+## 🚀 External Decryption GUI Backends & Installation
+
+TORCRYPT acts as an interactive, real-time **terminal GUI frontend** for industry-standard password recovery engines when installed on your host. It handles container parsing, in-memory hash extraction (`$zip2$`, `$pdf$`, `$7z$`, `$rar5$`), attack configuration, and live telemetry streaming into its Cyberpunk dashboard.
+
+If no external tools are present, TORCRYPT automatically falls back to its built-in pure-Rust AVX2 vector decryption engine.
+
+### 📦 Recommended Tool Installation Commands
+
+To enable GPU/CUDA/OpenCL acceleration and maximum format coverage, install the recommended backend tools for your system:
+
+#### 🐧 Debian / Ubuntu / Kali / Linux Mint
+```bash
+sudo apt update
+sudo apt install -y hashcat john fcrackzip
+```
+
+#### 🏹 Arch Linux / Manjaro
+```bash
+sudo pacman -S hashcat john fcrackzip
+```
+
+#### 🎩 Fedora / RHEL / CentOS
+```bash
+sudo dnf install -y hashcat john fcrackzip
+```
+
+#### 🍎 macOS (Homebrew)
+```bash
+brew install hashcat john-jumbo fcrackzip
+```
+
+#### 🪟 Windows (PowerShell)
+* **Using winget (Windows Package Manager):**
+  ```powershell
+  winget install hashcat.hashcat
+  ```
+* **Using Scoop:**
+  ```powershell
+  scoop install hashcat john
+  ```
+* **Using Chocolatey:**
+  ```powershell
+  choco install hashcat john
+  ```
+
 ---
 
 ## 🌟 Key Features

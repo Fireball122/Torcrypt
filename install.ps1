@@ -102,4 +102,7 @@ Write-Host "  ✨ TORCRYPT installation complete!" -ForegroundColor Green
 Write-Host "═════════════════════════════════════════════════════════════════" -ForegroundColor Green
 Write-Host "  Restart your PowerShell/Command Prompt or run:"
 Write-Host "    torcrypt  (or shorthand: dt)" -ForegroundColor Yellow
+Write-Host "  Optional External Acceleration Engines (GPU Acceleration):" -ForegroundColor Yellow
+Write-Host "    winget install hashcat.hashcat" -ForegroundColor DarkGray
+Write-Host "    choco install hashcat john" -ForegroundColor DarkGray
 Write-Host ""
