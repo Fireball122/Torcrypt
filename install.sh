@@ -46,9 +46,16 @@ echo -e "${CYAN}[*] Platform detected:${RESET} ${BOLD}${OS} (${ARCH})${RESET}"
 mkdir -p "${INSTALL_DIR}"
 TARGET_PATH="${INSTALL_DIR}/${BIN_NAME}"
 TEMP_BIN="$(mktemp)"
-
 DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${ASSET_NAME}"
 INSTALLED=false
+
+IS_UPDATE=false
+if [ -f "${TARGET_PATH}" ]; then
+    IS_UPDATE=true
+    echo -e "${CYAN}[*] Existing TORCRYPT installation detected. Fast-updating binary...${RESET}"
+else
+    echo -e "${CYAN}[*] Downloading TORCRYPT for ${OS} (${ARCH})...${RESET}"
+fi
 
 # 2. Try Pre-compiled Static Binary
 echo -e "${CYAN}[*] Fetching release binary from GitHub...${RESET}"
@@ -111,8 +118,23 @@ prompt_user() {
     fi
     echo "${reply:-$default_val}"
 }
+RUN_SETUP=false
+if [ "${IS_UPDATE}" = true ]; then
+    echo ""
+    echo -e "${GREEN}[✔] TORCRYPT binary updated successfully!${RESET}"
+    echo -e "${CYAN}    Existing backends and wordlists have been retained.${RESET}"
+    echo ""
+    reconfig=$(prompt_user "  Reconfigure external backends & download wordlists? [y/N]" "N")
+    case "${reconfig}" in
+        y|Y|yes|YES) RUN_SETUP=true ;;
+        *) RUN_SETUP=false ;;
+    esac
+else
+    RUN_SETUP=true
+fi
 
-# 7. Interactive External Decryption Backends
+if [ "${RUN_SETUP}" = true ]; then
+    # 7. Interactive External Decryption Backends
 echo ""
 echo -e "${CYAN}  ┌─────────────────────────────────────────────────────────────┐${RESET}"
 echo -e "${CYAN}  │ ⚡ STEP 1: EXTERNAL DECRYPTION GUI ENGINES (OPTIONAL)        │${RESET}"
@@ -200,10 +222,15 @@ if [ "${wl_choice}" = "1" ] || [ "${wl_choice}" = "2" ] || [ "${wl_choice}" = "3
 else
     echo -e "${CYAN}[*] Skipped wordlists.${RESET}"
 fi
+fi
 
 echo ""
 echo -e "${GREEN}${BOLD}═════════════════════════════════════════════════════════════════${RESET}"
-echo -e "${GREEN}${BOLD}  ✨ TORCRYPT installation complete!${RESET}"
+if [ "${IS_UPDATE}" = true ]; then
+    echo -e "${GREEN}${BOLD}  ✨ TORCRYPT update complete!${RESET}"
+else
+    echo -e "${GREEN}${BOLD}  ✨ TORCRYPT installation complete!${RESET}"
+fi
 echo -e "${GREEN}${BOLD}═════════════════════════════════════════════════════════════════${RESET}"
 echo -e "  Executable : ${BOLD}${TARGET_PATH}${RESET}"
 echo -e "  Shortcut   : ${BOLD}torcrypt${RESET}  (or shorthand: ${BOLD}dt${RESET})"

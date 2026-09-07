@@ -23,8 +23,13 @@ if (!(Test-Path -Path $InstallDir)) {
 $TargetPath = Join-Path $InstallDir $BinName
 $AliasPath = Join-Path $InstallDir $ShortAlias
 $DownloadUrl = "https://github.com/$Repo/releases/latest/download/torcrypt-windows-x86_64.exe"
+$IsUpdate = (Test-Path -Path $TargetPath)
 
-Write-Host "[*] Downloading TORCRYPT for Windows (x86_64)..." -ForegroundColor Cyan
+if ($IsUpdate) {
+    Write-Host "[*] Existing TORCRYPT installation detected. Fast-updating binary..." -ForegroundColor Cyan
+} else {
+    Write-Host "[*] Downloading TORCRYPT for Windows (x86_64)..." -ForegroundColor Cyan
+}
 
 $Downloaded = $false
 
@@ -113,7 +118,22 @@ function Prompt-User {
     }
 }
 
-# 5. Interactive External Decryption Backends
+$RunSetup = $false
+if ($IsUpdate) {
+    Write-Host ""
+    Write-Host "[✔] TORCRYPT binary updated successfully!" -ForegroundColor Green
+    Write-Host "    Existing backends and wordlists have been retained." -ForegroundColor Gray
+    Write-Host ""
+    $PromptAns = Prompt-User -Message "  Reconfigure external backends & download wordlists? [y/N]" -Default "N"
+    if ($PromptAns -eq "y" -or $PromptAns -eq "Y") {
+        $RunSetup = $true
+    }
+} else {
+    $RunSetup = $true
+}
+
+if ($RunSetup) {
+    # 5. Interactive External Decryption Backends
 Write-Host ""
 Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
 Write-Host "  │ ⚡ STEP 1: EXTERNAL DECRYPTION GUI ENGINES (OPTIONAL)        │" -ForegroundColor Cyan
@@ -225,11 +245,14 @@ if ($WlChoice -in @("1", "2", "3")) {
 } else {
     Write-Host "[*] Skipped wordlists." -ForegroundColor Gray
 }
-
 # 7. Final Summary Card
 Write-Host ""
 Write-Host "═════════════════════════════════════════════════════════════════" -ForegroundColor Green
-Write-Host "  ✨ TORCRYPT installation complete!" -ForegroundColor Green
+if ($IsUpdate) {
+    Write-Host "  ✨ TORCRYPT update complete!" -ForegroundColor Green
+} else {
+    Write-Host "  ✨ TORCRYPT installation complete!" -ForegroundColor Green
+}
 Write-Host "═════════════════════════════════════════════════════════════════" -ForegroundColor Green
 Write-Host "  Executable : $TargetPath" -ForegroundColor White
 Write-Host "  Shortcut   : dt (or torcrypt)" -ForegroundColor White
