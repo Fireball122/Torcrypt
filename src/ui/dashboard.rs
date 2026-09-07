@@ -47,10 +47,14 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
             Span::styled("LIVE CIPHER WORKER", theme::style_title()),
-            Span::styled(
-                format!(" [{}] ", app.backend_selection.short_name()),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-            ),
+            Span::raw(" "),
+            match app.active_backend {
+                crate::engine::backends::BackendType::Hashcat   => Span::styled(" [⚡ HASHCAT] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                crate::engine::backends::BackendType::John      => Span::styled(" [🔨 JOHN] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                crate::engine::backends::BackendType::Fcrackzip => Span::styled(" [📦 FCRACKZIP] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+                crate::engine::backends::BackendType::Native    => Span::styled(" [🦀 NATIVE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+                crate::engine::backends::BackendType::None      => Span::raw(""),
+            },
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -115,11 +119,21 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
                 Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
-            Span::styled("  Decryption GUI: ", theme::style_subtext()),
-            Span::styled(app.backend_selection.display_name(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("  Active Engine : ", theme::style_subtext()),
+            Span::styled(
+                format!(" {} ", app.active_backend.display_name()),
+                match app.active_backend {
+                    crate::engine::backends::BackendType::Hashcat   => Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    crate::engine::backends::BackendType::John      => Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    crate::engine::backends::BackendType::Fcrackzip => Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD),
+                    crate::engine::backends::BackendType::Native    => Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+                    crate::engine::backends::BackendType::None      => Style::default().fg(Color::White).bg(Color::Red),
+                },
+            ),
+            Span::styled(format!(" (Selector: {})", app.backend_selection.short_name()), Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(vec![
-            Span::styled("  Compute Engine: ", theme::style_subtext()),
+            Span::styled("  Execution Mode: ", theme::style_subtext()),
             Span::styled(app.active_engine.display_name(), Style::default().fg(engine_color).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![

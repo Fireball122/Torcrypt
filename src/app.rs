@@ -14,7 +14,7 @@ use crate::engine::system_info::SystemMonitor;
 use crate::engine::feasibility::estimate_feasibility;
 use crate::engine::wordlist_profiler::WordlistProfile;
 use crate::engine::{benchmark_stage, run_full_benchmark, BenchResult, PotfileRecord};
-use crate::engine::backends::{BackendCatalog, BackendSelection};
+use crate::engine::backends::{BackendCatalog, BackendSelection, BackendType};
 // ─── Tab Routing (5 Tabs) ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +163,7 @@ pub struct AppState {
     pub mask_input:         String,
     pub backend_catalog:    BackendCatalog,
     pub backend_selection:  BackendSelection,
+    pub active_backend:     BackendType,
     pub worker_state:       WorkerState,
     pub cipher_suite:       String,
     pub target_path:        String,
@@ -280,6 +281,7 @@ impl Default for AppState {
             mask_input:         "?u?l?l?l?d?d".into(),
             backend_catalog:    BackendCatalog::probe(),
             backend_selection:  BackendSelection::Auto,
+            active_backend:     BackendType::Native,
             analysis:           FileAnalysis::default(),
             attack_options:     Vec::new(),
             attack_selected:    0,
@@ -537,6 +539,12 @@ impl AppState {
 
         self.target_path       = req.target_path.clone();
         self.cipher_suite      = req.cipher_suite.clone();
+        self.active_backend    = self.backend_catalog.resolve_backend(
+            self.backend_selection,
+            Path::new(&self.analysis.file_path),
+            &self.analysis.lock_type,
+            self.analysis.ready_to_crack,
+        );
         self.active_engine     = active_engine;
         self.worker_state      = WorkerState::Running;
         self.items_done        = 0;
@@ -577,6 +585,12 @@ impl AppState {
         self.target_path       = req.target_path.clone();
         self.cipher_suite      = req.cipher_suite.clone();
         self.active_engine     = active_engine;
+        self.active_backend    = self.backend_catalog.resolve_backend(
+            self.backend_selection,
+            Path::new(&self.analysis.file_path),
+            &self.analysis.lock_type,
+            self.analysis.ready_to_crack,
+        );
         self.worker_state      = WorkerState::Running;
         self.items_done        = 0;
         self.elapsed_secs      = 0.0;
@@ -631,6 +645,12 @@ impl AppState {
         self.items_done        = offset;
         self.elapsed_secs      = 0.0;
         self.found_key         = None;
+        self.active_backend    = self.backend_catalog.resolve_backend(
+            self.backend_selection,
+            Path::new(&self.analysis.file_path),
+            &self.analysis.lock_type,
+            self.analysis.ready_to_crack,
+        );
         self.log_scroll_offset = 0;
         self.items_total       = total;
         self.active_strategy   = req.strategy_title.clone();
@@ -653,6 +673,7 @@ impl AppState {
                 cipher_suite,
                 active_strategy,
                 active_engine,
+                active_backend,
                 items_total,
                 speed_cps,
                 thread_count,
@@ -662,6 +683,7 @@ impl AppState {
                 self.cipher_suite    = cipher_suite;
                 self.active_strategy = active_strategy;
                 self.active_engine   = active_engine;
+                self.active_backend  = active_backend;
                 self.items_total     = items_total;
                 self.items_done      = 0;
                 self.speed_mbps      = speed_cps;

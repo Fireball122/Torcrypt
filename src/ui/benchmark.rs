@@ -140,11 +140,7 @@ fn shorten_algo(name: &str, max: usize) -> String {
         .replace("XChaCha20", "XCCA20")
         .trim()
         .to_string();
-    if s.len() <= max {
-        s
-    } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
-    }
+    crate::ui::truncate(&s, max)
 }
 
 // ─── Latency / Throughput Matrix + Detail Panel ──────────────────────────────

@@ -89,6 +89,7 @@ pub enum TelemetryEvent {
         cipher_suite:    String,
         active_strategy: String,
         active_engine:   ComputeEngine,
+        active_backend:  crate::engine::backends::BackendType,
         items_total:     u64,
         speed_cps:       f64,  // candidates per second (was incorrectly named speed_mbps)
         thread_count:    u8,

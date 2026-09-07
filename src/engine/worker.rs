@@ -302,6 +302,7 @@ impl DecryptionWorker {
             cipher_suite:    self.cipher_suite.clone(),
             active_strategy: self.active_strategy.clone(),
             active_engine:   self.active_engine,
+            active_backend:  effective_backend,
             items_total:     self.items_total,
             speed_cps:       self.speed_cps,
             thread_count:    self.thread_count,

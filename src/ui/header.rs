@@ -14,14 +14,14 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
     let cols = Layout::horizontal([
         Constraint::Length(28), // Left: Cyberpunk Banner Title
         Constraint::Min(0),     // Center: Tab Badges
-        Constraint::Length(24), // Right: Engine Status + Live UTC Clock
+        Constraint::Length(40), // Right: Engine Status + Active Backend + Live UTC Clock
     ])
     .split(area);
 
     // ── Left: App Title Badge ──────────────────────────────────────────────────
     let title_line = Line::from(vec![
         Span::styled(" ◈ TORCRYPT ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::styled(" v0.1.20 ", Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)),
+        Span::styled(" v0.1.21 ", Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)),
     ]);
     let title = Paragraph::new(title_line).alignment(Alignment::Left);
     frame.render_widget(title, cols[0]);
@@ -73,13 +73,22 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let now = Utc::now().format("%H:%M:%S UTC").to_string();
 
+    let backend_span = match app.active_backend {
+        crate::engine::backends::BackendType::Hashcat   => Span::styled(" [⚡ HASHCAT] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::John      => Span::styled(" [🔨 JOHN] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::Fcrackzip => Span::styled(" [📦 FCRACKZIP] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::Native    => Span::styled(" [🦀 NATIVE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::None      => Span::raw(""),
+    };
+
     let right_line = Line::from(vec![
         Span::styled(status_icon, status_style.add_modifier(Modifier::BOLD)),
-        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+        Span::raw(" "),
+        backend_span,
+        Span::styled("│ ", Style::default().fg(Color::DarkGray)),
         Span::styled(now, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
     ]);
-
     let right = Paragraph::new(right_line).alignment(Alignment::Right);
     frame.render_widget(right, cols[2]);
 }

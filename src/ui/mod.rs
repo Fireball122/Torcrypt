@@ -12,6 +12,8 @@ pub mod system;
 use crate::app::{AppState, Tab};
 use ratatui::{
     layout::{Constraint, Layout},
+    style::{Color, Modifier, Style},
+    widgets::Paragraph,
     Frame,
 };
 
@@ -63,11 +65,17 @@ pub mod theme {
 
 /// Safely truncate string `s` to at most `max` characters without splitting multibyte UTF-8 codepoints.
 pub fn truncate(s: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
     let char_count = s.chars().count();
     if char_count <= max {
         return s.to_string();
     }
     let target = max.saturating_sub(1);
+    if target == 0 {
+        return "…".to_string();
+    }
     let mut out: String = s.chars().take(target).collect();
     out.push('…');
     out
@@ -77,12 +85,19 @@ pub fn truncate(s: &str, max: usize) -> String {
 pub fn render(frame: &mut Frame, app: &mut AppState) {
     let area = frame.area();
 
+    // Prevent panic if user shrinks terminal below minimum usable size
+    if area.width < 30 || area.height < 8 {
+        let msg = Paragraph::new(format!("  Terminal too small ({}x{}). Please expand terminal window.", area.width, area.height))
+            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        frame.render_widget(msg, area);
+        return;
+    }
+
     // 1. If in startup splash mode, render splash animation across full screen
     if app.in_splash {
         splash::render_splash(frame, area, app);
         return;
     }
-
     // 2. Main 3-Zone View
     let rows = Layout::vertical([
         Constraint::Length(3),          // header
