@@ -983,10 +983,22 @@ impl AppState {
             'r' | 'R' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack => {
                 self.resume_attack_from_checkpoint();
             }
-            'e' | 'E' if self.current_tab == Tab::Analyze => {
+            'e' | 'E' if self.current_tab == Tab::Analyze || self.current_tab == Tab::Dashboard => {
                 self.backend_selection = self.backend_selection.next(&self.backend_catalog);
-                let name = self.backend_selection.display_name();
-                self.add_log(LogLevel::Lock, "", &format!("⚡ Decryption Backend Switched: {}", name));
+                self.active_backend = self.backend_catalog.resolve_backend(
+                    self.backend_selection,
+                    Path::new(&self.analysis.file_path),
+                    &self.analysis.lock_type,
+                    self.analysis.ready_to_crack,
+                );
+                let name = self.active_backend.display_name();
+                let sel_name = self.backend_selection.display_name();
+                self.add_log(LogLevel::Lock, "", &format!("⚡ Decryption Backend Switched: {} ({})", name, sel_name));
+
+                if self.worker_state == WorkerState::Running && self.analysis.ready_to_crack {
+                    self.add_log(LogLevel::Info, "", "Transferring active attack pipeline to new backend...");
+                    self.launch_attack_from_analysis();
+                }
             }
             'e' | 'E' if self.current_tab == Tab::Sessions => {
                 match export_audit_report(&self.analysis, &self.sessions, &self.current_dir) {

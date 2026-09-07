@@ -62,6 +62,8 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
             };
             spans.push(key("Space"));
             spans.push(label(pause_label));
+            spans.push(key("E"));
+            spans.push(label("Switch Backend"));
             spans.push(key("C"));
             spans.push(label("Cancel"));
             spans.push(key("PgUp/Dn or J/K"));

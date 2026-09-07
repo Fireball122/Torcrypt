@@ -29,7 +29,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, app: &AppState) {
 
 fn render_left(frame: &mut Frame, area: Rect, app: &AppState) {
     let rows = Layout::vertical([
-        Constraint::Length(12),  // Live Worker Card (with Recovered Key display)
+        Constraint::Length(13),  // Live Worker Card (with Recovered Key display & Backend Switcher)
         Constraint::Length(5),   // Progress Gauge
         Constraint::Length(5),   // Compute Saturation (GPU + CPU Threads)
         Constraint::Min(0),      // Cipher Info & Hardware Acceleration Matrix
@@ -130,7 +130,9 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
                     crate::engine::backends::BackendType::None      => Style::default().fg(Color::White).bg(Color::Red),
                 },
             ),
-            Span::styled(format!(" (Selector: {})", app.backend_selection.short_name()), Style::default().fg(Color::DarkGray)),
+            Span::styled("  ", Style::default()),
+            Span::styled(" [E: Switch] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(format!(" (Mode: {})", app.backend_selection.short_name()), Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(vec![
             Span::styled("  Execution Mode: ", theme::style_subtext()),
@@ -344,6 +346,10 @@ fn render_cipher_info(frame: &mut Frame, area: Rect, app: &AppState) {
         Row::new(vec![
             Cell::from("Active Strategy").style(theme::style_subtext()),
             Cell::from(truncate(&app.active_strategy, inner.width.saturating_sub(22) as usize)).style(Style::default().fg(Color::Yellow)),
+        ]),
+        Row::new(vec![
+            Cell::from("Decryption GUI").style(theme::style_subtext()),
+            Cell::from(format!("{} (Press [E] to switch)", app.active_backend.display_name())).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         ]),
         Row::new(vec![
             Cell::from("HW Host").style(theme::style_subtext()),
