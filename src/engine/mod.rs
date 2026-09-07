@@ -22,7 +22,7 @@ pub use wordlist_profiler::WordlistProfile;
 
 pub use session_db::{DbSession, PotfileRecord, SessionDatabase};
 pub use system_info::SystemMonitor;
-pub use backends::{BackendCatalog, BackendSelection, BackendType};
+pub use backends::{BackendCatalog, BackendRecommendation, BackendSelection, BackendType};
 
 pub use protocol::{
     AttackRequest, ComputeEngine, EngineCommand, LogLevel, TelemetryEvent, WorkerState,

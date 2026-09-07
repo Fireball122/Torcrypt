@@ -150,13 +150,15 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
 
 fn render_smart_inspector(frame: &mut Frame, area: Rect, app: &AppState) {
     let rows = Layout::vertical([
-        Constraint::Length(14), // Container Inspection Report
-        Constraint::Min(0),     // Attack Recommender & Execution Launcher
+        Constraint::Length(8), // Container Inspection Report
+        Constraint::Length(7), // Decryption Engines & Auto-Recommender Card
+        Constraint::Min(0),    // Attack Recommender & Execution Launcher
     ])
     .split(area);
 
     render_inspection_report(frame, rows[0], app);
-    render_attack_launcher(frame, rows[1], app);
+    render_engine_selector_card(frame, rows[1], app);
+    render_attack_launcher(frame, rows[2], app);
 }
 
 fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
@@ -200,62 +202,26 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
         Line::from(vec![
             Span::styled("  Container Type: ", theme::style_subtext()),
             Span::styled(a.mime_type.clone(), Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("  File Size     : ", theme::style_subtext()),
+            Span::styled("  │ Size: ", theme::style_subtext()),
             Span::styled(fmt_file_size(a.file_size), Style::default().fg(Color::White)),
-            Span::styled("  │ Magic Header: ", theme::style_subtext()),
-            Span::styled(a.magic_header.clone(), Style::default().fg(Color::Magenta)),
         ]),
         Line::from(vec![
-            Span::styled("  Lock Status   : ", theme::style_subtext()),
+            Span::styled("  Magic Header  : ", theme::style_subtext()),
+            Span::styled(a.magic_header.clone(), Style::default().fg(Color::Magenta)),
+            Span::styled("  │ Lock: ", theme::style_subtext()),
             Span::styled(lock_badge, lock_style),
         ]),
         Line::from(vec![
             Span::styled("  Detected Crypt: ", theme::style_subtext()),
             Span::styled(a.lock_type.clone(),
                 if a.is_encrypted { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() }),
-        ]),
-        Line::from(vec![
-            Span::styled("  Decryption GUI: ", theme::style_subtext()),
-            {
-                let resolved = if a.ready_to_crack {
-                    app.backend_catalog.resolve_backend(
-                        app.backend_selection,
-                        std::path::Path::new(&a.file_path),
-                        &a.lock_type,
-                        a.ready_to_crack,
-                    )
-                } else {
-                    crate::engine::backends::BackendType::None
-                };
-                let style = match resolved {
-                    crate::engine::backends::BackendType::Hashcat   => Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    crate::engine::backends::BackendType::John      => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                    crate::engine::backends::BackendType::Fcrackzip => Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD),
-                    crate::engine::backends::BackendType::Native    => Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                    crate::engine::backends::BackendType::None      => Style::default().fg(Color::Red),
-                };
-                Span::styled(format!("{} ", resolved.display_name()), style)
-            },
-            Span::styled(" │ [E: Cycle Backend]", Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Backend Mode  : ", theme::style_subtext()),
-            Span::styled(
-                format!("Preference: {} ", app.backend_selection.display_name()),
-                Style::default().fg(Color::White),
-            ),
-            Span::styled(format!("│ Auto-Router: {}", engine_badge.0), Style::default().fg(engine_badge.1)),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  Entropy: {:.2} / 8.00 bits ({}% Randomness) ", a.entropy, entropy_pct), theme::style_subtext()),
+            Span::styled(format!("  (Entropy: {:.2}/8.00 bits) ", a.entropy), theme::style_subtext()),
         ]),
     ];
 
     let content_layout = Layout::vertical([
-        Constraint::Length(8), // Metadata lines (8 rows)
-        Constraint::Min(0),
+        Constraint::Length(4), // Metadata lines (4 rows)
+        Constraint::Min(0),    // Entropy gauge
     ])
     .split(inner);
 
@@ -271,6 +237,109 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
         .label(format!("{:.2} bits/byte entropy", a.entropy));
 
     frame.render_widget(entropy_gauge, content_layout[1]);
+}
+
+fn render_engine_selector_card(frame: &mut Frame, area: Rect, app: &AppState) {
+    let a = &app.analysis;
+    let rec = app.backend_catalog.suggest_backend(
+        std::path::Path::new(&a.file_path),
+        &a.lock_type,
+        a.ready_to_crack,
+    );
+    let resolved = if a.ready_to_crack {
+        app.backend_catalog.resolve_backend(
+            app.backend_selection,
+            std::path::Path::new(&a.file_path),
+            &a.lock_type,
+            a.ready_to_crack,
+        )
+    } else {
+        crate::engine::backends::BackendType::None
+    };
+
+    let title_line = Line::from(vec![
+        Span::raw("─ ◈ "),
+        Span::styled("DECRYPTION ENGINE AUTO-RECOMMENDER & SELECTOR", theme::style_title()),
+        Span::styled("  [Press ", theme::style_subtext()),
+        Span::styled("E", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(" to cycle] ", theme::style_subtext()),
+        Span::styled(format!("(Active: {}) ", resolved.short_name()), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+    ]);
+
+    let block = Block::default()
+        .title(title_line)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(if a.ready_to_crack { Style::default().fg(Color::Cyan) } else { theme::style_border() });
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if !a.ready_to_crack {
+        let p = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("  Select an encrypted file on the left to see compatible decryption engines and recommendations.", theme::style_subtext()),
+            ]),
+        ]);
+        frame.render_widget(p, inner);
+        return;
+    }
+
+    let cat = &app.backend_catalog;
+    let mut engines = vec![
+        (crate::engine::backends::BackendType::Hashcat, cat.has_hashcat()),
+        (crate::engine::backends::BackendType::John, cat.has_john()),
+    ];
+    if cat.has_fcrackzip() && (a.file_path.ends_with(".zip") || a.lock_type.to_lowercase().contains("zip")) {
+        engines.push((crate::engine::backends::BackendType::Fcrackzip, true));
+    }
+    engines.push((crate::engine::backends::BackendType::Native, a.ready_to_crack));
+
+    let rows: Vec<Row> = engines
+        .into_iter()
+        .map(|(btype, installed)| {
+            let is_active = resolved == btype;
+            let is_rec = rec.suggested == btype;
+
+            let cursor = if is_active {
+                Cell::from(" ▶ ACTIVE ").style(Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
+            } else {
+                Cell::from("   ────── ").style(theme::style_dim())
+            };
+
+            let name_cell = Cell::from(btype.display_name()).style(
+                if is_active {
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Gray)
+                }
+            );
+
+            let status_cell = if installed {
+                Cell::from("INSTALLED ✔").style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            } else {
+                Cell::from("NOT DETECTED").style(Style::default().fg(Color::DarkGray))
+            };
+
+            let rec_cell = if is_rec {
+                Cell::from(format!("⚡ RECOMMENDED: {}", rec.reason))
+                    .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            } else {
+                Cell::from("").style(theme::style_dim())
+            };
+
+            Row::new(vec![cursor, name_cell, status_cell, rec_cell])
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(11),
+        Constraint::Length(34),
+        Constraint::Length(15),
+        Constraint::Min(0),
+    ];
+    let table = Table::new(rows, widths).column_spacing(1);
+    frame.render_widget(table, inner);
+
 }
 
 fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
@@ -423,14 +492,23 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         &app.analysis.lock_type,
         app.analysis.ready_to_crack,
     );
+    let rec = app.backend_catalog.suggest_backend(
+        std::path::Path::new(&app.analysis.file_path),
+        &app.analysis.lock_type,
+        app.analysis.ready_to_crack,
+    );
+    let is_rec = resolved == rec.suggested;
 
     let mut spans = vec![
         Span::styled(" [A / Space] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::styled(format!(" Launch via {} ", resolved.short_name()), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("({}) ", active_label), Style::default().fg(Color::White)),
-        Span::styled(" │ [E] Backend: ", theme::style_subtext()),
-        Span::styled(format!("{} ", app.backend_selection.short_name()), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
     ];
+    if is_rec {
+        spans.push(Span::styled("⚡(RECOMMENDED) ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+    }
+    spans.push(Span::styled(format!("({}) ", active_label), Style::default().fg(Color::White)));
+    spans.push(Span::styled(" │ [E] Switch Backend: ", theme::style_subtext()));
+    spans.push(Span::styled(format!("{} ", app.backend_selection.short_name()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
     if let Some((ses_id, offset)) = checkpoint {
         spans.push(Span::styled(" │ ", theme::style_dim()));
         spans.push(Span::styled(" [R] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)));

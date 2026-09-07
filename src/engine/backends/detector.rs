@@ -39,6 +39,12 @@ impl BackendType {
 }
 
 /// User preference for backend execution engine
+
+#[derive(Debug, Clone)]
+pub struct BackendRecommendation {
+    pub suggested: BackendType,
+    pub reason:    &'static str,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BackendSelection {
     #[default]
@@ -303,6 +309,203 @@ impl BackendCatalog {
         ext == "zip" && (cipher_lower.contains("zipcrypto") || cipher_lower.contains("pkware") || !cipher_lower.contains("aes"))
     }
 
+    /// Auto-suggest the optimal decryption engine and explain why based on file format.
+    pub fn suggest_backend(
+        &self,
+        target_path: &Path,
+        cipher_suite: &str,
+        has_native_cracker: bool,
+    ) -> BackendRecommendation {
+        let ext = target_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let c = cipher_suite.to_lowercase();
+
+        // 1. Raw Hashes (MD5, NTLM, SHA-1, SHA-256)
+        if ext == "hash" || ext == "txt" || c.contains("md5") || c.contains("ntlm") || c.contains("sha") {
+            if self.hashcat.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::Hashcat,
+                    reason: "GPU acceleration kernel delivers fastest candidate throughput",
+                };
+            } else if self.john.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::John,
+                    reason: "Multi-core CPU SIMD vectorization",
+                };
+            } else if has_native_cracker {
+                return BackendRecommendation {
+                    suggested: BackendType::Native,
+                    reason: "Built-in AVX2 8-way SIMD hash evaluator",
+                };
+            }
+        }
+
+        // 2. ZIP Archives (WinZip AES or ZipCrypto)
+        if ext == "zip" || c.contains("zip") {
+            if c.contains("winzip") || c.contains("aes") {
+                if self.hashcat.is_some() {
+                    return BackendRecommendation {
+                        suggested: BackendType::Hashcat,
+                        reason: "Hashcat Mode 13600 (WinZip AES-256) GPU OpenCL kernel",
+                    };
+                } else if self.john.is_some() {
+                    return BackendRecommendation {
+                        suggested: BackendType::John,
+                        reason: "John the Ripper WinZip Jumbo engine",
+                    };
+                } else if has_native_cracker {
+                    return BackendRecommendation {
+                        suggested: BackendType::Native,
+                        reason: "Built-in PBKDF2-HMAC-SHA1 WinZip AES cracker",
+                    };
+                }
+            } else {
+                if self.fcrackzip.is_some() {
+                    return BackendRecommendation {
+                        suggested: BackendType::Fcrackzip,
+                        reason: "fcrackzip dedicated lightweight ZIP engine",
+                    };
+                } else if self.hashcat.is_some() {
+                    return BackendRecommendation {
+                        suggested: BackendType::Hashcat,
+                        reason: "Hashcat Mode 17200 (ZipCrypto CRC32)",
+                    };
+                } else if self.john.is_some() {
+                    return BackendRecommendation {
+                        suggested: BackendType::John,
+                        reason: "John the Ripper PKZIP Jumbo engine",
+                    };
+                } else if has_native_cracker {
+                    return BackendRecommendation {
+                        suggested: BackendType::Native,
+                        reason: "Built-in CRC32 ZipCrypto multi-threaded solver",
+                    };
+                }
+            }
+        }
+
+        // 3. 7-Zip Archives (.7z)
+        if ext == "7z" || c.contains("7z") || c.contains("7-zip") {
+            if self.hashcat.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::Hashcat,
+                    reason: "Hashcat Mode 11600 (7-Zip) GPU AES-CBC engine",
+                };
+            } else if self.john.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::John,
+                    reason: "John 7z Jumbo recovery engine",
+                };
+            } else if has_native_cracker {
+                return BackendRecommendation {
+                    suggested: BackendType::Native,
+                    reason: "Built-in SHA256 AES-CBC 7z verification engine",
+                };
+            }
+        }
+
+        // 4. RAR Archives (.rar)
+        if ext == "rar" || c.contains("rar") {
+            if self.hashcat.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::Hashcat,
+                    reason: if c.contains("rar5") { "Hashcat Mode 13000 (RAR5 PBKDF2-SHA256)" } else { "Hashcat Mode 12500 (RAR3-hp)" },
+                };
+            } else if self.john.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::John,
+                    reason: "John the Ripper RAR Jumbo format parser",
+                };
+            } else if has_native_cracker {
+                return BackendRecommendation {
+                    suggested: BackendType::Native,
+                    reason: "Built-in RAR5 PBKDF2 verification engine",
+                };
+            }
+        }
+
+        // 5. PDF Documents (.pdf)
+        if ext == "pdf" || c.contains("pdf") {
+            if self.hashcat.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::Hashcat,
+                    reason: "Hashcat Mode 10500/10600 (PDF Acrobat security handler)",
+                };
+            } else if self.john.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::John,
+                    reason: "John PDF Jumbo engine",
+                };
+            } else if has_native_cracker {
+                return BackendRecommendation {
+                    suggested: BackendType::Native,
+                    reason: "Built-in PDF encryption dictionary verifier",
+                };
+            }
+        }
+
+        // 6. Wi-Fi Captures (.pcap, .22000, .hccapx)
+        if ext == "22000" || ext == "hccapx" || ext == "pcap" || ext == "pcapng" || c.contains("wpa") || c.contains("pmkid") {
+            if self.hashcat.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::Hashcat,
+                    reason: "Hashcat Mode 22000 (WPA-PBKDF2-PMKID+EAPOL)",
+                };
+            } else if self.john.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::John,
+                    reason: "John wpapsk recovery format",
+                };
+            }
+        }
+
+        // 7. KeePass (.kdbx)
+        if ext == "kdbx" || c.contains("keepass") {
+            if self.hashcat.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::Hashcat,
+                    reason: "Hashcat Mode 13400 (KeePass 1/2 AES-KDF)",
+                };
+            } else if self.john.is_some() {
+                return BackendRecommendation {
+                    suggested: BackendType::John,
+                    reason: "John KeePass Jumbo engine",
+                };
+            } else if has_native_cracker {
+                return BackendRecommendation {
+                    suggested: BackendType::Native,
+                    reason: "Built-in KeePass AES-KDF solver",
+                };
+            }
+        }
+
+        // Default fallback
+        if self.hashcat.is_some() && self.can_hashcat(target_path, cipher_suite) {
+            BackendRecommendation {
+                suggested: BackendType::Hashcat,
+                reason: "GPU/OpenCL acceleration preferred",
+            }
+        } else if self.john.is_some() && self.can_john(target_path, cipher_suite) {
+            BackendRecommendation {
+                suggested: BackendType::John,
+                reason: "Multi-core CPU SIMD engine",
+            }
+        } else if has_native_cracker {
+            BackendRecommendation {
+                suggested: BackendType::Native,
+                reason: "In-process pure-Rust AVX2 engine",
+            }
+        } else {
+            BackendRecommendation {
+                suggested: BackendType::None,
+                reason: "Requires external tool (install hashcat or john)",
+            }
+        }
+    }
+
     /// Backwards-compatible legacy selector.
     pub fn select_backend(&self, target_path: &Path, cipher_suite: &str) -> Option<BackendType> {
         let b = self.select_best_backend(target_path, cipher_suite, false);
@@ -521,5 +724,30 @@ mod tests {
         // Just verify it doesn't panic and returns a valid summary
         let summary = catalog.summary();
         assert!(!summary.is_empty());
+    }
+
+    #[test]
+    fn test_suggest_backend() {
+        let catalog = BackendCatalog::probe();
+
+        // 1. Raw MD5 hash suggestion
+        let rec_md5 = catalog.suggest_backend(Path::new("test.hash"), "MD5 Digest", true);
+        assert!(!rec_md5.reason.is_empty());
+        if catalog.has_hashcat() {
+            assert_eq!(rec_md5.suggested, BackendType::Hashcat);
+            assert!(rec_md5.reason.contains("GPU"));
+        }
+
+        // 2. WinZip AES suggestion
+        let rec_winzip = catalog.suggest_backend(Path::new("archive.zip"), "WinZip AES-256", true);
+        assert!(!rec_winzip.reason.is_empty());
+        if catalog.has_hashcat() {
+            assert_eq!(rec_winzip.suggested, BackendType::Hashcat);
+            assert!(rec_winzip.reason.contains("13600"));
+        }
+
+        // 3. RAR5 suggestion
+        let rec_rar = catalog.suggest_backend(Path::new("archive.rar"), "RAR5 Archive", true);
+        assert!(!rec_rar.reason.is_empty());
     }
 }
