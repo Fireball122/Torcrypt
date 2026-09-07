@@ -13,7 +13,7 @@ use crate::engine::session_db::{DbSession, SessionDatabase};
 use crate::engine::system_info::SystemMonitor;
 use crate::engine::feasibility::estimate_feasibility;
 use crate::engine::wordlist_profiler::WordlistProfile;
-use crate::engine::{benchmark_stage, run_full_benchmark, BenchResult, PotfileRecord};
+use crate::engine::{benchmark_stage, default_benchmarks, BenchResult, PotfileRecord};
 use crate::engine::backends::{BackendCatalog, BackendSelection, BackendType};
 // ─── Tab Routing (5 Tabs) ─────────────────────────────────────────────────────
 
@@ -268,7 +268,7 @@ impl Default for AppState {
         }
 
         let mut state = Self {
-            in_splash:          true,
+            in_splash:          false,
             splash_frame:       0,
             splash_last_tick:   now,
             splash_start_time:  now,
@@ -322,7 +322,7 @@ impl Default for AppState {
             potfile_selected:   0,
             search_query:       String::new(),
 
-            bench_results:      run_full_benchmark(hw.cpu_cores as u8),
+            bench_results:      default_benchmarks(hw.cpu_cores as u8, hw.avx2),
             bench_selected:     0,
             bench_running:      false,
             bench_progress:     0,

@@ -14,7 +14,7 @@ pub mod crackers;
 pub mod backends;
 pub mod crack_pool;
 pub mod benchmark_runner;
-pub use benchmark_runner::{benchmark_stage, run_full_benchmark, BenchResult};
+pub use benchmark_runner::{benchmark_stage, default_benchmarks, run_full_benchmark, BenchResult};
 
 pub use audit_export::export_audit_report;
 pub use feasibility::{estimate_feasibility, FeasibilityReport, FeasibilityTier};

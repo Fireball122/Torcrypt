@@ -61,15 +61,10 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                     }
 
                     if app.in_splash {
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(()),
-                            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ')
-                                if app.splash_start_time.elapsed().as_millis() >= 1000 =>
-                            {
-                                app.in_splash = false;
-                            }
-                            _ => {}
+                        if key.code == KeyCode::Char('q') || key.code == KeyCode::Char('Q') {
+                            return Ok(());
                         }
+                        app.in_splash = false;
                         continue;
                     }
 

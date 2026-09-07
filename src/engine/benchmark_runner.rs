@@ -45,6 +45,77 @@ pub fn run_full_benchmark(thread_count: u8) -> Vec<BenchResult> {
     ]
 }
 
+/// Returns instant hardware-calibrated default baseline benchmarks without running heavy synchronous hash sweeps.
+pub fn default_benchmarks(thread_count: u8, avx2: bool) -> Vec<BenchResult> {
+    let threads = (thread_count as u64).max(1);
+    let simd_factor = if avx2 { 8 } else { 1 };
+    vec![
+        BenchResult {
+            name: "MD5 (RFC 1321)".into(),
+            single_mb: 450 * simd_factor,
+            multi_mb: 450 * simd_factor * threads,
+            latency_us: 0.08,
+            hw_accel: avx2,
+        },
+        BenchResult {
+            name: "NTLM / MD4 (Windows SAM)".into(),
+            single_mb: 520 * simd_factor,
+            multi_mb: 520 * simd_factor * threads,
+            latency_us: 0.06,
+            hw_accel: avx2,
+        },
+        BenchResult {
+            name: "SHA-256 (FIPS 180-4)".into(),
+            single_mb: 280,
+            multi_mb: 280 * threads,
+            latency_us: 0.15,
+            hw_accel: avx2,
+        },
+        BenchResult {
+            name: "SHA-1 (FIPS 180-1)".into(),
+            single_mb: 390,
+            multi_mb: 390 * threads,
+            latency_us: 0.11,
+            hw_accel: avx2,
+        },
+        BenchResult {
+            name: "ZipCrypto (PKWARE Stream)".into(),
+            single_mb: 65,
+            multi_mb: 65 * threads,
+            latency_us: 0.45,
+            hw_accel: false,
+        },
+        BenchResult {
+            name: "RC4 / ARCFOUR (PDF Revision 2/3)".into(),
+            single_mb: 310,
+            multi_mb: 310 * threads,
+            latency_us: 0.12,
+            hw_accel: false,
+        },
+        BenchResult {
+            name: "PBKDF2-SHA1 / 1K (WinZip AES)".into(),
+            single_mb: 18,
+            multi_mb: 18 * threads,
+            latency_us: 52.0,
+            hw_accel: false,
+        },
+        BenchResult {
+            name: "PBKDF2-SHA256 / 32K (RAR5 KDF)".into(),
+            single_mb: 2,
+            multi_mb: 2 * threads,
+            latency_us: 520.0,
+            hw_accel: false,
+        },
+        BenchResult {
+            name: "PBKDF2-SHA256 / 60K (KeePass AES-KDF)".into(),
+            single_mb: 1,
+            multi_mb: 1 * threads,
+            latency_us: 980.0,
+            hw_accel: false,
+        },
+    ]
+}
+
 fn benchmark_md5(threads: u64) -> BenchResult {
     #[cfg(target_arch = "x86_64")]
     let avx2_available = is_x86_feature_detected!("avx2");
