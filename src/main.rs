@@ -70,13 +70,14 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
 
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Char('Q')
-                            if !app.search_mode && !app.show_help =>
+                            if !app.search_mode && !app.show_help && !app.engine_modal_open && !app.mask_modal_open =>
                         {
                             return Ok(());
                         }
                         KeyCode::Esc => {
-                            app.show_help   = false;
-                            app.search_mode = false;
+                            if app.engine_modal_open { app.engine_modal_open = false; }
+                            else if app.mask_modal_open { app.mask_modal_open = false; }
+                            else { app.show_help = false; app.search_mode = false; }
                         }
                         KeyCode::PageUp => {
                             if app.current_tab == Tab::Dashboard {
@@ -99,6 +100,16 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                             if app.current_tab == Tab::Dashboard {
                                 app.log_scroll_offset = 0; // Snap to bottom live stream
                             }
+                        }
+                        KeyCode::Enter if app.engine_modal_open => {
+                            let sel = match app.engine_modal_selected {
+                                0 => crate::engine::backends::BackendSelection::Auto,
+                                1 => crate::engine::backends::BackendSelection::Hashcat,
+                                2 => crate::engine::backends::BackendSelection::John,
+                                _ => crate::engine::backends::BackendSelection::Native,
+                            };
+                            app.apply_engine_selection(sel);
+                            app.engine_modal_open = false;
                         }
                         KeyCode::Enter if app.search_mode => {
                             app.search_mode = false;
@@ -125,36 +136,44 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                             app.attack_selected = (app.attack_selected + 1) % opt_count;
                         }
                         KeyCode::Up => {
-                            if app.current_tab == Tab::Analyze && app.file_selected_idx > 0 {
-                                app.file_selected_idx -= 1;
-                                app.analyze_selected_file();
-                            }
-                            if app.current_tab == Tab::Dashboard {
-                                let max_scroll = app.log_ring.len().saturating_sub(5);
-                                app.log_scroll_offset = (app.log_scroll_offset + 1).min(max_scroll);
-                            }
-                            if app.current_tab == Tab::Sessions && app.sessions_selected > 0 {
-                                app.sessions_selected -= 1;
-                            }
-                            if app.current_tab == Tab::Benchmark && app.bench_selected > 0 {
-                                app.bench_selected -= 1;
+                            if app.engine_modal_open {
+                                app.engine_modal_selected = app.engine_modal_selected.saturating_sub(1);
+                            } else {
+                                if app.current_tab == Tab::Analyze && app.file_selected_idx > 0 {
+                                    app.file_selected_idx -= 1;
+                                    app.analyze_selected_file();
+                                }
+                                if app.current_tab == Tab::Dashboard {
+                                    let max_scroll = app.log_ring.len().saturating_sub(5);
+                                    app.log_scroll_offset = (app.log_scroll_offset + 1).min(max_scroll);
+                                }
+                                if app.current_tab == Tab::Sessions && app.sessions_selected > 0 {
+                                    app.sessions_selected -= 1;
+                                }
+                                if app.current_tab == Tab::Benchmark && app.bench_selected > 0 {
+                                    app.bench_selected -= 1;
+                                }
                             }
                         }
                         KeyCode::Down => {
-                            if app.current_tab == Tab::Analyze && !app.dir_entries.is_empty() {
-                                app.file_selected_idx = (app.file_selected_idx + 1).min(app.dir_entries.len().saturating_sub(1));
-                                app.analyze_selected_file();
-                            }
-                            if app.current_tab == Tab::Dashboard {
-                                app.log_scroll_offset = app.log_scroll_offset.saturating_sub(1);
-                            }
-                            if app.current_tab == Tab::Sessions {
-                                app.sessions_selected = (app.sessions_selected + 1)
-                                    .min(app.sessions.len().saturating_sub(1));
-                            }
-                            if app.current_tab == Tab::Benchmark {
-                                app.bench_selected = (app.bench_selected + 1)
-                                    .min(app.bench_results.len().saturating_sub(1));
+                            if app.engine_modal_open {
+                                app.engine_modal_selected = (app.engine_modal_selected + 1).min(3);
+                            } else {
+                                if app.current_tab == Tab::Analyze && !app.dir_entries.is_empty() {
+                                    app.file_selected_idx = (app.file_selected_idx + 1).min(app.dir_entries.len().saturating_sub(1));
+                                    app.analyze_selected_file();
+                                }
+                                if app.current_tab == Tab::Dashboard {
+                                    app.log_scroll_offset = app.log_scroll_offset.saturating_sub(1);
+                                }
+                                if app.current_tab == Tab::Sessions {
+                                    app.sessions_selected = (app.sessions_selected + 1)
+                                        .min(app.sessions.len().saturating_sub(1));
+                                }
+                                if app.current_tab == Tab::Benchmark {
+                                    app.bench_selected = (app.bench_selected + 1)
+                                        .min(app.bench_results.len().saturating_sub(1));
+                                }
                             }
                         }
                         KeyCode::Char(c) => app.on_key_char(c),

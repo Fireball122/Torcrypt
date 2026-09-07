@@ -15,6 +15,10 @@ Write-Host "  ║        🔐  TORCRYPT — WINDOWS POWERSHELL INSTALLER        
 Write-Host "  ╚═══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
+# 0. Terminate any running Torcrypt processes so Windows does not lock the .exe
+Get-Process -Name "torcrypt", "torcrypt-tui", "dt" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 200
+
 # 1. Ensure Install Directory Exists
 if (!(Test-Path -Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
@@ -22,6 +26,7 @@ if (!(Test-Path -Path $InstallDir)) {
 
 $TargetPath = Join-Path $InstallDir $BinName
 $AliasPath = Join-Path $InstallDir $ShortAlias
+$TempFile = Join-Path $env:TEMP ("torcrypt_dl_" + [System.Guid]::NewGuid().ToString("N") + ".exe")
 $DownloadUrl = "https://github.com/$Repo/releases/latest/download/torcrypt-windows-x86_64.exe"
 $IsUpdate = (Test-Path -Path $TargetPath)
 
@@ -36,10 +41,11 @@ $Downloaded = $false
 # Method A: Use native curl.exe if present (Windows 10/11 built-in)
 if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
     try {
-        & curl.exe -fSL -o "$TargetPath" "$DownloadUrl" --connect-timeout 10
-        if ((Test-Path -Path $TargetPath) -and ((Get-Item -Path $TargetPath).Length -gt 100000)) {
+        & curl.exe -fSL -o "$TempFile" "$DownloadUrl" --connect-timeout 10
+        if ((Test-Path -Path $TempFile) -and ((Get-Item -Path $TempFile).Length -gt 1000000)) {
+            Move-Item -Path "$TempFile" -Destination "$TargetPath" -Force
             $Downloaded = $true
-            Write-Host "[+] Downloaded pre-compiled Windows executable via curl." -ForegroundColor Green
+            Write-Host "[+] Downloaded and installed release binary via curl." -ForegroundColor Green
         }
     } catch {
         # Fall through to PowerShell methods
@@ -49,25 +55,27 @@ if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
 # Method B: PowerShell WebClient / Invoke-WebRequest
 if (-not $Downloaded) {
     try {
-        # Enable TLS 1.2 safely without throwing on older .NET Framework
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        (New-Object System.Net.WebClient).DownloadFile($DownloadUrl, $TargetPath)
-        if ((Test-Path -Path $TargetPath) -and ((Get-Item -Path $TargetPath).Length -gt 100000)) {
+        (New-Object System.Net.WebClient).DownloadFile($DownloadUrl, $TempFile)
+        if ((Test-Path -Path $TempFile) -and ((Get-Item -Path $TempFile).Length -gt 1000000)) {
+            Move-Item -Path "$TempFile" -Destination "$TargetPath" -Force
             $Downloaded = $true
-            Write-Host "[+] Downloaded pre-compiled Windows executable via WebClient." -ForegroundColor Green
+            Write-Host "[+] Downloaded and installed release binary via WebClient." -ForegroundColor Green
         }
     } catch {
         try {
-            Invoke-WebRequest -Uri $DownloadUrl -OutFile $TargetPath -UseBasicParsing
-            if ((Test-Path -Path $TargetPath) -and ((Get-Item -Path $TargetPath).Length -gt 100000)) {
+            Invoke-WebRequest -Uri $DownloadUrl -OutFile $TempFile -UseBasicParsing
+            if ((Test-Path -Path $TempFile) -and ((Get-Item -Path $TempFile).Length -gt 1000000)) {
+                Move-Item -Path "$TempFile" -Destination "$TargetPath" -Force
                 $Downloaded = $true
-                Write-Host "[+] Downloaded pre-compiled Windows executable via Invoke-WebRequest." -ForegroundColor Green
+                Write-Host "[+] Downloaded and installed release binary via Invoke-WebRequest." -ForegroundColor Green
             }
         } catch {
             Write-Host "[!] Pre-compiled release download failed: $_" -ForegroundColor Yellow
         }
     }
 }
+Remove-Item -Path $TempFile -Force -ErrorAction SilentlyContinue
 
 # Method C: Fallback to local Cargo build
 if (-not $Downloaded) {

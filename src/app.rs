@@ -161,6 +161,8 @@ pub struct AppState {
     pub custom_wordlist:    Option<PathBuf>,
     pub mask_modal_open:    bool,
     pub mask_input:         String,
+    pub engine_modal_open:     bool,
+    pub engine_modal_selected: usize,
     pub backend_catalog:    BackendCatalog,
     pub backend_selection:  BackendSelection,
     pub active_backend:     BackendType,
@@ -282,6 +284,8 @@ impl Default for AppState {
             custom_wordlist:    None,
             mask_modal_open:    false,
             mask_input:         "?u?l?l?l?d?d".into(),
+            engine_modal_open:     false,
+            engine_modal_selected: 0,
             backend_catalog:    BackendCatalog::probe(),
             backend_selection:  BackendSelection::Auto,
             active_backend:     BackendType::Native,
@@ -515,6 +519,24 @@ impl AppState {
         }
         self.attack_options = generate_attack_options(&self.analysis, self.sys_gpu_available);
         self.attack_selected = 0; // Pre-select Auto-Recommended strategy
+    }
+
+    // ── Engine Selection (modal commit) ────────────────────────────────────────
+    pub fn apply_engine_selection(&mut self, sel: BackendSelection) {
+        self.backend_selection = sel;
+        self.active_backend = self.backend_catalog.resolve_backend(
+            sel,
+            Path::new(&self.analysis.file_path),
+            &self.analysis.lock_type,
+            self.analysis.ready_to_crack,
+        );
+        let name     = self.active_backend.display_name();
+        let sel_name = sel.display_name();
+        self.add_log(LogLevel::Lock, "", &format!("[+] Engine → {name} ({sel_name})"));
+        if self.worker_state == WorkerState::Running && self.analysis.ready_to_crack {
+            self.add_log(LogLevel::Info, "", "Transferring active pipeline to new engine...");
+            self.launch_attack_from_analysis();
+        }
     }
 
     // ── Launch Attack from Tab 1 (Clean Per-Job State & Strategy Selection) ──
@@ -947,6 +969,31 @@ impl AppState {
             }
             return;
         }
+        if self.engine_modal_open {
+            match c {
+                '\x1b' | 'e' | 'E' | 'q' | 'Q' => {
+                    self.engine_modal_open = false;
+                }
+                '1' => { self.apply_engine_selection(BackendSelection::Auto);      self.engine_modal_open = false; }
+                '2' => { self.apply_engine_selection(BackendSelection::Hashcat);   self.engine_modal_open = false; }
+                '3' => { self.apply_engine_selection(BackendSelection::John);      self.engine_modal_open = false; }
+                '4' => { self.apply_engine_selection(BackendSelection::Native);    self.engine_modal_open = false; }
+                'j' | 'J' => { self.engine_modal_selected = (self.engine_modal_selected + 1).min(3); }
+                'k' | 'K' => { self.engine_modal_selected = self.engine_modal_selected.saturating_sub(1); }
+                '\r' | '\n' => {
+                    let sel = match self.engine_modal_selected {
+                        0 => BackendSelection::Auto,
+                        1 => BackendSelection::Hashcat,
+                        2 => BackendSelection::John,
+                        _ => BackendSelection::Native,
+                    };
+                    self.apply_engine_selection(sel);
+                    self.engine_modal_open = false;
+                }
+                _ => {}
+            }
+        }
+        if self.engine_modal_open { return; }
         if self.search_mode {
             match c {
                 '\x08' | '\x7f' => { self.search_query.pop(); }
@@ -1048,21 +1095,15 @@ impl AppState {
                 self.resume_attack_from_checkpoint();
             }
             'e' | 'E' if self.current_tab == Tab::Analyze || self.current_tab == Tab::Dashboard => {
-                self.backend_selection = self.backend_selection.next(&self.backend_catalog);
-                self.active_backend = self.backend_catalog.resolve_backend(
-                    self.backend_selection,
-                    Path::new(&self.analysis.file_path),
-                    &self.analysis.lock_type,
-                    self.analysis.ready_to_crack,
-                );
-                let name = self.active_backend.display_name();
-                let sel_name = self.backend_selection.display_name();
-                self.add_log(LogLevel::Lock, "", &format!("[+] Decryption Backend Switched: {} ({})", name, sel_name));
-
-                if self.worker_state == WorkerState::Running && self.analysis.ready_to_crack {
-                    self.add_log(LogLevel::Info, "", "Transferring active attack pipeline to new backend...");
-                    self.launch_attack_from_analysis();
-                }
+                // Open the engine picker modal; set cursor to current selection
+                self.engine_modal_selected = match self.backend_selection {
+                    BackendSelection::Auto      => 0,
+                    BackendSelection::Hashcat   => 1,
+                    BackendSelection::John       => 2,
+                    BackendSelection::Fcrackzip  => 2, // map to John slot (row 2)
+                    BackendSelection::Native    => 3,
+                };
+                self.engine_modal_open = true;
             }
             'e' | 'E' if self.current_tab == Tab::Sessions => {
                 match export_audit_report(&self.analysis, &self.sessions, &self.current_dir) {

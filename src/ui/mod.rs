@@ -8,6 +8,7 @@ pub mod help;
 pub mod sessions;
 pub mod splash;
 pub mod system;
+pub mod engine_modal;
 
 use crate::app::{AppState, Tab};
 use ratatui::{
@@ -121,5 +122,9 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
     // Help modal rendered last (floats over everything)
     if app.show_help {
         help::render_help_modal(frame, area, app);
+    }
+    // Decryption Engine selector modal (floats over content)
+    if app.engine_modal_open {
+        engine_modal::render_engine_modal(frame, area, app);
     }
 }

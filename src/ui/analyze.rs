@@ -262,7 +262,7 @@ fn render_engine_selector_card(frame: &mut Frame, area: Rect, app: &AppState) {
         Span::styled("DECRYPTION ENGINE AUTO-RECOMMENDER & SELECTOR", theme::style_title()),
         Span::styled("  [Press ", theme::style_subtext()),
         Span::styled("E", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::styled(" to cycle] ", theme::style_subtext()),
+        Span::styled(" to choose] ", theme::style_subtext()),
         Span::styled(format!("(Active: {}) ", resolved.short_name()), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
     ]);
 
@@ -331,6 +331,35 @@ fn render_engine_selector_card(frame: &mut Frame, area: Rect, app: &AppState) {
         })
         .collect();
 
+    // ── 4-pill engine selector bar ──────────────────────────────────────────────
+    use crate::engine::backends::BackendSelection;
+    let layout = Layout::vertical([
+        Constraint::Length(1), // pill bar
+        Constraint::Min(0),    // detail table
+    ])
+    .split(inner);
+
+    let pill_options: [(BackendSelection, &str, bool); 4] = [
+        (BackendSelection::Auto,    " [1] Auto    ", true),
+        (BackendSelection::Hashcat, " [2] Hashcat ", cat.has_hashcat()),
+        (BackendSelection::John,    " [3] John    ", cat.has_john()),
+        (BackendSelection::Native,  " [4] Native  ", true),
+    ];
+    let pills: Vec<Span> = pill_options.iter().map(|(sel, label, avail)| {
+        let active = app.backend_selection == *sel;
+        if active {
+            Span::styled(*label, Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+        } else if *avail {
+            Span::styled(*label, Style::default().fg(Color::Cyan))
+        } else {
+            Span::styled(*label, theme::style_dim())
+        }
+    }).collect();
+    let mut pill_spans = vec![Span::styled("  ENGINE: ", theme::style_subtext())];
+    pill_spans.extend(pills);
+    pill_spans.push(Span::styled("  [E] Open picker", theme::style_subtext()));
+    frame.render_widget(Paragraph::new(Line::from(pill_spans)), layout[0]);
+
     let widths = [
         Constraint::Length(11),
         Constraint::Length(34),
@@ -338,7 +367,7 @@ fn render_engine_selector_card(frame: &mut Frame, area: Rect, app: &AppState) {
         Constraint::Min(0),
     ];
     let table = Table::new(rows, widths).column_spacing(1);
-    frame.render_widget(table, inner);
+    frame.render_widget(table, layout[1]);
 
 }
 
@@ -388,7 +417,7 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
             Line::from(vec![
                 Span::styled("    • Decryption GUI Backend (Press ", theme::style_subtext()),
                 Span::styled("[E]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled(" to cycle): ", theme::style_subtext()),
+                Span::styled(" to choose engine — ", theme::style_subtext()),
                 Span::styled(app.backend_selection.display_name(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                 Span::styled(format!(" │ Detected: {}", app.backend_catalog.summary()), theme::style_subtext()),
             ]),
@@ -507,7 +536,7 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         spans.push(Span::styled(" [RECOMMENDED] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
     }
     spans.push(Span::styled(format!("({}) ", active_label), Style::default().fg(Color::White)));
-    spans.push(Span::styled(" │ [E] Switch Backend: ", theme::style_subtext()));
+    spans.push(Span::styled(" │ [E] Engine: ", theme::style_subtext()));
     spans.push(Span::styled(format!("{} ", app.backend_selection.short_name()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
     spans.push(Span::styled(" │ [T] Cascade: ", theme::style_subtext()));
     spans.push(if app.auto_cascade {
