@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use app::{AppState, Tab};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -18,7 +18,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 fn main() -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend  = CrosstermBackend::new(stdout);
     let mut term = Terminal::new(backend)?;
     term.hide_cursor()?;
@@ -31,7 +31,7 @@ fn main() -> io::Result<()> {
     let result = run(&mut term);
 
     disable_raw_mode()?;
-    execute!(term.backend_mut(), LeaveAlternateScreen)?;
+    execute!(term.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     term.show_cursor()?;
     result
 }
@@ -181,7 +181,21 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                     }
                 }
                 Event::Resize(_, _) => { /* ratatui automatically reflows layout */ }
-                _ => {}
+                Event::Mouse(mouse) => {
+                    match mouse.kind {
+                        MouseEventKind::Down(_) => {
+                            app.handle_click(mouse.column, mouse.row);
+                        }
+                        MouseEventKind::ScrollUp => {
+                            app.scroll_up();
+                        }
+                        MouseEventKind::ScrollDown => {
+                            app.scroll_down();
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {} // FocusGained, FocusLost, Paste — not used
             }
         }
 

@@ -85,6 +85,7 @@ pub fn truncate(s: &str, max: usize) -> String {
 /// Top-level render: splash screen or header + content + footer. Zero dead space.
 pub fn render(frame: &mut Frame, app: &mut AppState) {
     let area = frame.area();
+    app.click_regions.clear();
 
     // Prevent panic if user shrinks terminal below minimum usable size
     if area.width < 30 || area.height < 8 {

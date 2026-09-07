@@ -49,6 +49,25 @@ impl Tab {
     }
 }
 
+// ─── Mouse Hit-Testing ────────────────────────────────────────────────────────
+use ratatui::layout::Rect;
+
+#[derive(Debug, Clone)]
+pub enum ClickAction {
+    SwitchTab(Tab),
+    SelectFile(usize),
+    SelectAttack(usize),
+    SelectEnginePill(BackendSelection),
+    OpenEngineModal,
+    OpenMaskModal,
+    LaunchAttack,
+    NavigateUp,
+    EngineModalRow(usize),
+    CloseModal,
+    ScrollUp,
+    ScrollDown,
+}
+
 // ─── Re-Exported Decoupled Engine Protocol ────────────────────────────────────
 pub use crate::engine::{
     AttackRequest, ComputeEngine, EngineCommand, EngineHandle, LogLevel, TelemetryEvent, WorkerState,
@@ -227,6 +246,8 @@ pub struct AppState {
 
     // Tick counter (drives animations)
     pub tick:               u64,
+    /// Clickable regions populated each frame by render functions; cleared at render start.
+    pub click_regions:      Vec<(Rect, ClickAction)>,
 }
 
 impl Default for AppState {
@@ -347,6 +368,7 @@ impl Default for AppState {
             rdrand,
             vaes512,
             tick:               0,
+            click_regions:      Vec::new(),
         };
 
         for _ in 0..60 {
@@ -524,12 +546,26 @@ impl AppState {
     // ── Engine Selection (modal commit) ────────────────────────────────────────
     pub fn apply_engine_selection(&mut self, sel: BackendSelection) {
         self.backend_selection = sel;
-        self.active_backend = self.backend_catalog.resolve_backend(
+        let resolved = self.backend_catalog.resolve_backend(
             sel,
             Path::new(&self.analysis.file_path),
             &self.analysis.lock_type,
             self.analysis.ready_to_crack,
         );
+        // When no file is loaded, resolve_backend can return None even for explicit
+        // selections (e.g. Hashcat with empty path). Show the intent in the badge by
+        // mapping the selection to a representative BackendType for display purposes.
+        self.active_backend = if resolved != BackendType::None {
+            resolved
+        } else {
+            match sel {
+                BackendSelection::Auto      => BackendType::Native, // best guess until file loaded
+                BackendSelection::Hashcat   => BackendType::Hashcat,
+                BackendSelection::John      => BackendType::John,
+                BackendSelection::Fcrackzip => BackendType::Fcrackzip,
+                BackendSelection::Native    => BackendType::Native,
+            }
+        };
         let name     = self.active_backend.display_name();
         let sel_name = sel.display_name();
         self.add_log(LogLevel::Lock, "", &format!("[+] Engine → {name} ({sel_name})"));
@@ -907,6 +943,120 @@ impl AppState {
     pub fn thread_saturation_pct(&self) -> u8 {
         if self.thread_count == 0 { return 0; }
         ((self.thread_active as u32 * 100) / self.thread_count as u32) as u8
+    }
+
+    /// Dispatch a mouse click at terminal coordinates (col, row).
+    pub fn handle_click(&mut self, col: u16, row: u16) {
+        // Drain the region list — find the innermost matching rect (last pushed wins for overlaps).
+        let hit = self.click_regions.iter().rev().find(|(rect, _)| {
+            col >= rect.x && col < rect.x + rect.width &&
+            row >= rect.y && row < rect.y + rect.height
+        }).map(|(_, action)| action.clone());
+
+        if let Some(action) = hit {
+            match action {
+                ClickAction::SwitchTab(tab) => { self.current_tab = tab; }
+                ClickAction::SelectFile(idx) => {
+                    if idx < self.dir_entries.len() {
+                        let entry = self.dir_entries[idx].clone();
+                        if entry.is_dir {
+                            self.current_dir = entry.path;
+                            self.refresh_directory();
+                        } else {
+                            self.file_selected_idx = idx;
+                            self.analyze_selected_file();
+                        }
+                    }
+                }
+                ClickAction::SelectAttack(idx) => {
+                    if idx < self.attack_options.len() {
+                        self.attack_selected = idx;
+                    }
+                }
+                ClickAction::SelectEnginePill(sel) => {
+                    self.apply_engine_selection(sel);
+                }
+                ClickAction::OpenEngineModal => {
+                    self.engine_modal_selected = match self.backend_selection {
+                        BackendSelection::Auto      => 0,
+                        BackendSelection::Hashcat   => 1,
+                        BackendSelection::John       => 2,
+                        BackendSelection::Fcrackzip  => 2,
+                        BackendSelection::Native    => 3,
+                    };
+                    self.engine_modal_open = true;
+                }
+                ClickAction::OpenMaskModal => { self.mask_modal_open = true; }
+                ClickAction::LaunchAttack => {
+                    if self.analysis.ready_to_crack {
+                        self.launch_attack_from_analysis();
+                    }
+                }
+                ClickAction::NavigateUp => { self.navigate_up_directory(); }
+                ClickAction::EngineModalRow(idx) => {
+                    let sel = match idx {
+                        0 => BackendSelection::Auto,
+                        1 => BackendSelection::Hashcat,
+                        2 => BackendSelection::John,
+                        _ => BackendSelection::Native,
+                    };
+                    self.apply_engine_selection(sel);
+                    self.engine_modal_open = false;
+                }
+                ClickAction::CloseModal => {
+                    self.engine_modal_open = false;
+                    self.mask_modal_open = false;
+                    self.show_help = false;
+                }
+                ClickAction::ScrollUp   => { self.scroll_up(); }
+                ClickAction::ScrollDown => { self.scroll_down(); }
+            }
+        }
+    }
+
+    /// Scroll up in the context of the current tab.
+    pub fn scroll_up(&mut self) {
+        match self.current_tab {
+            Tab::Analyze => {
+                if self.file_selected_idx > 0 {
+                    self.file_selected_idx -= 1;
+                    self.analyze_selected_file();
+                }
+            }
+            Tab::Dashboard => {
+                let max_scroll = self.log_ring.len().saturating_sub(5);
+                self.log_scroll_offset = (self.log_scroll_offset + 1).min(max_scroll);
+            }
+            Tab::Sessions => {
+                if self.sessions_selected > 0 { self.sessions_selected -= 1; }
+            }
+            Tab::Benchmark => {
+                if self.bench_selected > 0 { self.bench_selected -= 1; }
+            }
+            _ => {}
+        }
+    }
+
+    /// Scroll down in the context of the current tab.
+    pub fn scroll_down(&mut self) {
+        match self.current_tab {
+            Tab::Analyze => {
+                if !self.dir_entries.is_empty() {
+                    self.file_selected_idx = (self.file_selected_idx + 1).min(self.dir_entries.len().saturating_sub(1));
+                    self.analyze_selected_file();
+                }
+            }
+            Tab::Dashboard => {
+                self.log_scroll_offset = self.log_scroll_offset.saturating_sub(1);
+            }
+            Tab::Sessions => {
+                self.sessions_selected = (self.sessions_selected + 1).min(self.sessions.len().saturating_sub(1));
+            }
+            Tab::Benchmark => {
+                self.bench_selected = (self.bench_selected + 1).min(self.bench_results.len().saturating_sub(1));
+            }
+            _ => {}
+        }
     }
 
     pub fn on_tick(&mut self) {

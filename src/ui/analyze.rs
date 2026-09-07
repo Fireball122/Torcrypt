@@ -144,11 +144,22 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
         .row_highlight_style(Style::default().bg(Color::Indexed(237)));
 
     frame.render_stateful_widget(table, rows[1], &mut ts);
+    // Register clickable file rows — table inner area starts after block border and header row
+    // rows[1] is the full table rect; block border = 1, header = 1 → data starts at y+2
+    let data_start_y = rows[1].y + 2; // border + header
+    for i in 0..app.dir_entries.len() {
+        let row_y = data_start_y + i as u16;
+        if row_y >= rows[1].y + rows[1].height { break; }
+        app.click_regions.push((
+            ratatui::layout::Rect::new(rows[1].x, row_y, rows[1].width, 1),
+            crate::app::ClickAction::SelectFile(i),
+        ));
+    }
 }
 
 // ─── RIGHT COLUMN: Smart Decryption Analysis & Launcher Card ──────────────────
 
-fn render_smart_inspector(frame: &mut Frame, area: Rect, app: &AppState) {
+fn render_smart_inspector(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let rows = Layout::vertical([
         Constraint::Length(8), // Container Inspection Report
         Constraint::Length(7), // Decryption Engines & Auto-Recommender Card
@@ -239,7 +250,7 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
     frame.render_widget(entropy_gauge, content_layout[1]);
 }
 
-fn render_engine_selector_card(frame: &mut Frame, area: Rect, app: &AppState) {
+fn render_engine_selector_card(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let a = &app.analysis;
     let rec = app.backend_catalog.suggest_backend(
         std::path::Path::new(&a.file_path),
@@ -359,6 +370,26 @@ fn render_engine_selector_card(frame: &mut Frame, area: Rect, app: &AppState) {
     pill_spans.extend(pills);
     pill_spans.push(Span::styled("  [E] Open picker", theme::style_subtext()));
     frame.render_widget(Paragraph::new(Line::from(pill_spans)), layout[0]);
+    // Register pill click regions — "  ENGINE: " is 10 chars, each pill label is fixed width
+    let pill_label_widths: [(BackendSelection, u16); 4] = [
+        (BackendSelection::Auto,    13), // " [1] Auto    "
+        (BackendSelection::Hashcat, 13), // " [2] Hashcat "
+        (BackendSelection::John,    13), // " [3] John    "
+        (BackendSelection::Native,  13), // " [4] Native  "
+    ];
+    let mut pill_x = layout[0].x + 10; // skip "  ENGINE: "
+    for (sel, w) in &pill_label_widths {
+        app.click_regions.push((
+            ratatui::layout::Rect::new(pill_x, layout[0].y, *w, 1),
+            crate::app::ClickAction::SelectEnginePill(*sel),
+        ));
+        pill_x += w;
+    }
+    // The "[E] Open picker" text registers the whole remaining area as modal opener
+    app.click_regions.push((
+        ratatui::layout::Rect::new(pill_x, layout[0].y, layout[0].width.saturating_sub(pill_x - layout[0].x), 1),
+        crate::app::ClickAction::OpenEngineModal,
+    ));
 
     let widths = [
         Constraint::Length(11),
@@ -371,7 +402,7 @@ fn render_engine_selector_card(frame: &mut Frame, area: Rect, app: &AppState) {
 
 }
 
-fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
+fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
@@ -558,6 +589,21 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         .block(launch_block);
 
     frame.render_widget(launch_p, sub_sections[1]);
+    // Register attack option click regions (each option = 3 lines: title, desc, blank)
+    // strat_lines[0] = header text, strat_lines[1] = blank → data starts at line 2
+    if app.analysis.ready_to_crack {
+        let data_y = sub_sections[0].y + 2; // 2 header lines
+        for i in 0..app.attack_options.len() {
+            let row_y = data_y + (i as u16) * 3;
+            if row_y >= sub_sections[0].y + sub_sections[0].height { break; }
+            app.click_regions.push((
+                ratatui::layout::Rect::new(sub_sections[0].x, row_y, sub_sections[0].width, 2),
+                crate::app::ClickAction::SelectAttack(i),
+            ));
+        }
+        // Launch button is the whole sub_sections[1] block
+        app.click_regions.push((sub_sections[1], crate::app::ClickAction::LaunchAttack));
+    }
 }
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

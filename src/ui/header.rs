@@ -1,5 +1,5 @@
 // ui/header.rs — Cyberpunk top navigation bar with UTC clock and dirty-state tab indicators
-use crate::app::{AppState, Tab, WorkerState};
+use crate::app::{AppState, ClickAction, Tab, WorkerState};
 use crate::ui::theme;
 use chrono::Utc;
 use ratatui::{
@@ -10,7 +10,7 @@ use ratatui::{
     Frame,
 };
 
-pub fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
+pub fn render_header(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let cols = Layout::horizontal([
         Constraint::Length(28), // Left: Cyberpunk Banner Title
         Constraint::Min(0),     // Center: Tab Badges
@@ -57,9 +57,29 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
         Span::raw(" "),
         tab_span("[5] System",    Tab::System,    app.current_tab),
     ]);
-
     let tabs = Paragraph::new(tab_line).alignment(Alignment::Center);
     frame.render_widget(tabs, cols[1]);
+
+    // Register tab click regions — each tab label is "  [N] Name  " = fixed widths
+    // Widths: Analyze=13, Dashboard=14, Benchmark=14, Sessions=13, System=11 (plus 1 space gap)
+    let tab_defs: &[(&str, Tab, u16)] = &[
+        ("  [1] Analyze  ",   Tab::Analyze,   15),
+        ("  [2] Dashboard  ", Tab::Dashboard,  16),
+        ("  [3] Benchmark  ", Tab::Benchmark,  16),
+        ("  [4] Sessions  ",  Tab::Sessions,   15),
+        ("  [5] System  ",    Tab::System,     13),
+    ];
+    // Total tab bar content width
+    let total_tab_w: u16 = tab_defs.iter().map(|(_, _, w)| w + 1).sum::<u16>().saturating_sub(1);
+    let tab_bar_left = cols[1].x + cols[1].width.saturating_sub(total_tab_w) / 2;
+    let mut cur_x = tab_bar_left;
+    for (_, tab, w) in tab_defs {
+        app.click_regions.push((
+            ratatui::layout::Rect::new(cur_x, cols[1].y, *w, cols[1].height),
+            ClickAction::SwitchTab(*tab),
+        ));
+        cur_x += w + 1; // +1 for the space separator
+    }
 
     // ── Right: Status + UTC Clock ─────────────────────────────────────────────
     let (status_icon, status_style) = match app.worker_state {
