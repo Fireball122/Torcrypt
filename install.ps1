@@ -39,7 +39,7 @@ if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
         & curl.exe -fSL -o "$TargetPath" "$DownloadUrl" --connect-timeout 10
         if ((Test-Path -Path $TargetPath) -and ((Get-Item -Path $TargetPath).Length -gt 100000)) {
             $Downloaded = $true
-            Write-Host "[✔] Downloaded pre-compiled Windows executable via curl." -ForegroundColor Green
+            Write-Host "[+] Downloaded pre-compiled Windows executable via curl." -ForegroundColor Green
         }
     } catch {
         # Fall through to PowerShell methods
@@ -54,14 +54,14 @@ if (-not $Downloaded) {
         (New-Object System.Net.WebClient).DownloadFile($DownloadUrl, $TargetPath)
         if ((Test-Path -Path $TargetPath) -and ((Get-Item -Path $TargetPath).Length -gt 100000)) {
             $Downloaded = $true
-            Write-Host "[✔] Downloaded pre-compiled Windows executable via WebClient." -ForegroundColor Green
+            Write-Host "[+] Downloaded pre-compiled Windows executable via WebClient." -ForegroundColor Green
         }
     } catch {
         try {
             Invoke-WebRequest -Uri $DownloadUrl -OutFile $TargetPath -UseBasicParsing
             if ((Test-Path -Path $TargetPath) -and ((Get-Item -Path $TargetPath).Length -gt 100000)) {
                 $Downloaded = $true
-                Write-Host "[✔] Downloaded pre-compiled Windows executable via Invoke-WebRequest." -ForegroundColor Green
+                Write-Host "[+] Downloaded pre-compiled Windows executable via Invoke-WebRequest." -ForegroundColor Green
             }
         } catch {
             Write-Host "[!] Pre-compiled release download failed: $_" -ForegroundColor Yellow
@@ -82,7 +82,7 @@ if (-not $Downloaded) {
         Pop-Location
         Remove-Item -Recurse -Force $TempDir
         $Downloaded = $true
-        Write-Host "[✔] Successfully compiled and installed via Cargo." -ForegroundColor Green
+        Write-Host "[+] Successfully compiled and installed via Cargo." -ForegroundColor Green
     } else {
         Write-Error "[-] Could not download release binary. Please check internet access or install Rust/Cargo."
         exit 1
@@ -91,7 +91,7 @@ if (-not $Downloaded) {
 
 # 2. Create dt.exe copy alias
 Copy-Item $TargetPath $AliasPath -Force
-Write-Host "[✔] Created shortcut: $AliasPath" -ForegroundColor Green
+Write-Host "[+] Created shortcut: $AliasPath" -ForegroundColor Green
 
 # 3. Add to User PATH if not present
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -118,26 +118,24 @@ function Prompt-User {
     }
 }
 
-$RunSetup = $false
-if ($IsUpdate) {
+$ReconfigRequested = ($args -contains "-Reconfigure") -or ($args -contains "-Setup") -or ($env:TORCRYPT_RECONFIGURE -eq "1")
+
+if ($IsUpdate -and -not $ReconfigRequested) {
     Write-Host ""
-    Write-Host "[✔] TORCRYPT binary updated successfully!" -ForegroundColor Green
+    Write-Host "[+] TORCRYPT binary updated successfully!" -ForegroundColor Green
     Write-Host "    Existing backends and wordlists have been retained." -ForegroundColor Gray
-    Write-Host ""
-    $PromptAns = Prompt-User -Message "  Reconfigure external backends & download wordlists? [y/N]" -Default "N"
-    if ($PromptAns -eq "y" -or $PromptAns -eq "Y") {
-        $RunSetup = $true
-    }
+    Write-Host "    (To reconfigure backends or wordlists, run installer with -Reconfigure)" -ForegroundColor DarkGray
+    $RunSetup = $false
 } else {
     $RunSetup = $true
 }
 
 if ($RunSetup) {
     # 5. Interactive External Decryption Backends
-Write-Host ""
-Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
-Write-Host "  │ ⚡ STEP 1: EXTERNAL DECRYPTION GUI ENGINES (OPTIONAL)        │" -ForegroundColor Cyan
-Write-Host "  └─────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
+    Write-Host "  │  STEP 1: EXTERNAL DECRYPTION GUI ENGINES (OPTIONAL)         │" -ForegroundColor Cyan
+    Write-Host "  └─────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host "  TORCRYPT can operate as a terminal GUI frontend for:" -ForegroundColor Gray
 Write-Host "    [1] Hashcat (GPU / OpenCL / CUDA Acceleration - Recommended)" -ForegroundColor White
 Write-Host "    [2] John the Ripper (Multi-Core SIMD & Jumbo Container Formats)" -ForegroundColor White
@@ -157,7 +155,11 @@ if ($ToolChoice -in @("1", "2", "3")) {
         if ($HasWinget) {
             try {
                 & winget.exe install --id hashcat.hashcat -e --accept-package-agreements --accept-source-agreements --silent
-                Write-Host "[✔] Hashcat installed successfully via winget." -ForegroundColor Green
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "[+] Hashcat installed successfully via winget." -ForegroundColor Green
+                } else {
+                    Write-Host "[!] Note: winget could not find hashcat.hashcat. To install, run: choco install hashcat" -ForegroundColor Yellow
+                }
             } catch {
                 Write-Host "[!] winget install failed: $_" -ForegroundColor Yellow
             }
@@ -174,10 +176,10 @@ if ($ToolChoice -in @("1", "2", "3")) {
         Write-Host "[*] Installing John the Ripper (Multi-Core SIMD)..." -ForegroundColor Cyan
         if ($HasChoco) {
             & choco.exe install -y john
-            Write-Host "[✔] John the Ripper installed via Chocolatey." -ForegroundColor Green
+            Write-Host "[+] John the Ripper installed via Chocolatey." -ForegroundColor Green
         } elseif ($HasScoop) {
             & scoop.ps1 install john
-            Write-Host "[✔] John the Ripper installed via Scoop." -ForegroundColor Green
+            Write-Host "[+] John the Ripper installed via Scoop." -ForegroundColor Green
         } else {
             Write-Host "[!] John the Ripper can be installed via: choco install john (or scoop install john)" -ForegroundColor Yellow
         }
@@ -189,7 +191,7 @@ if ($ToolChoice -in @("1", "2", "3")) {
 # 6. Interactive Wordlists Download
 Write-Host ""
 Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
-Write-Host "  │ 📖 STEP 2: DICTIONARY WORDLISTS                             │" -ForegroundColor Cyan
+Write-Host "  │  STEP 2: DICTIONARY WORDLISTS                              │" -ForegroundColor Cyan
 Write-Host "  └─────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host "  TORCRYPT includes a 27K built-in corpus. Real-world wordlists" -ForegroundColor Gray
 Write-Host "  enable recovery of complex, real-world passwords:" -ForegroundColor Gray
@@ -218,7 +220,7 @@ if ($WlChoice -in @("1", "2", "3")) {
                 Invoke-WebRequest -Uri $RockYouUrl -OutFile $RockYouPath -UseBasicParsing
             }
             if ((Test-Path -Path $RockYouPath) -and ((Get-Item -Path $RockYouPath).Length -gt 1000000)) {
-                Write-Host "[✔] Saved RockYou wordlist to: $RockYouPath" -ForegroundColor Green
+                Write-Host "[+] Saved RockYou wordlist to: $RockYouPath" -ForegroundColor Green
             }
         } catch {
             Write-Host "[!] Could not download RockYou wordlist: $_" -ForegroundColor Yellow
@@ -236,7 +238,7 @@ if ($WlChoice -in @("1", "2", "3")) {
                 Invoke-WebRequest -Uri $Top100kUrl -OutFile $Top100kPath -UseBasicParsing
             }
             if ((Test-Path -Path $Top100kPath) -and ((Get-Item -Path $Top100kPath).Length -gt 10000)) {
-                Write-Host "[✔] Saved Top-100k wordlist to: $Top100kPath" -ForegroundColor Green
+                Write-Host "[+] Saved Top-100k wordlist to: $Top100kPath" -ForegroundColor Green
             }
         } catch {
             Write-Host "[!] Could not download Top-100k wordlist: $_" -ForegroundColor Yellow
@@ -250,9 +252,9 @@ if ($WlChoice -in @("1", "2", "3")) {
 Write-Host ""
 Write-Host "═════════════════════════════════════════════════════════════════" -ForegroundColor Green
 if ($IsUpdate) {
-    Write-Host "  ✨ TORCRYPT update complete!" -ForegroundColor Green
+    Write-Host "  [+] TORCRYPT update complete!" -ForegroundColor Green
 } else {
-    Write-Host "  ✨ TORCRYPT installation complete!" -ForegroundColor Green
+    Write-Host "  [+] TORCRYPT installation complete!" -ForegroundColor Green
 }
 Write-Host "═════════════════════════════════════════════════════════════════" -ForegroundColor Green
 Write-Host "  Executable : $TargetPath" -ForegroundColor White

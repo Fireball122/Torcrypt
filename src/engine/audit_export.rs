@@ -47,16 +47,16 @@ pub fn export_audit_report(
     md.push_str(&format!("| **Container Format** | `{}` |\n", analysis.mime_type));
     md.push_str(&format!("| **Shannon Entropy** | `{:.4} / 8.0000` bits/byte |\n", analysis.entropy));
     md.push_str(&format!("| **Magic Header** | `{}` |\n", analysis.magic_header));
-    md.push_str(&format!("| **Encryption Status** | `{}` |\n\n", if analysis.is_encrypted { "🔒 ENCRYPTED" } else { "🔓 PLAINTEXT" }));
+    md.push_str(&format!("| **Encryption Status** | `{}` |\n\n", if analysis.is_encrypted { "ENCRYPTED" } else { "PLAINTEXT" }));
 
     // 2. Cryptographic Profile
-    md.push_str("## 🛡️ Identified Cryptographic Profile\n\n");
+    md.push_str("## Identified Cryptographic Profile\n\n");
     md.push_str(&format!("* **Detected Lock / Cipher Suite:** {}\n", analysis.lock_type));
     md.push_str(&format!("* **Recommended Pipeline:** {}\n", analysis.recommended_engine.display_name()));
     md.push_str(&format!("* **Recovery Strategy Recommendation:** {}\n\n", analysis.recommended_attack));
 
     // 3. Security Evaluation
-    md.push_str("## ⚠️ Cryptographic Posture Assessment\n\n");
+    md.push_str("## Cryptographic Posture Assessment\n\n");
     md.push_str(&format!("* **Security Posture Rating:** **`{}`**\n", security_rating));
     md.push_str(&format!("* **Analysis Finding:** {}\n\n", posture_note));
 

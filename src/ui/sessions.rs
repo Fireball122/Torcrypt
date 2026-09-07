@@ -384,7 +384,7 @@ fn render_potfile_inspector(frame: &mut Frame, area: Rect, app: &AppState) {
         ]),
         Line::from(vec![
             Span::styled("  Cache Status  : ", theme::style_subtext()),
-            Span::styled("✨ PERSISTED IN POTFILE (0.001 ms)", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled("[POTFILE] PERSISTED (0.001 ms)", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         ]),
     ];
 

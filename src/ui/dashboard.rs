@@ -49,10 +49,10 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
             Span::styled("LIVE CIPHER WORKER", theme::style_title()),
             Span::raw(" "),
             match app.active_backend {
-                crate::engine::backends::BackendType::Hashcat   => Span::styled(" [⚡ HASHCAT] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                crate::engine::backends::BackendType::John      => Span::styled(" [🔨 JOHN] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                crate::engine::backends::BackendType::Fcrackzip => Span::styled(" [📦 FCRACKZIP] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-                crate::engine::backends::BackendType::Native    => Span::styled(" [🦀 NATIVE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+                crate::engine::backends::BackendType::Hashcat   => Span::styled(" [HASHCAT] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                crate::engine::backends::BackendType::John      => Span::styled(" [JOHN] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                crate::engine::backends::BackendType::Fcrackzip => Span::styled(" [FCRACKZIP] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+                crate::engine::backends::BackendType::Native    => Span::styled(" [NATIVE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
                 crate::engine::backends::BackendType::None      => Span::raw(""),
             },
         ]))
@@ -141,7 +141,7 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         Line::from(vec![
             Span::styled("  Auto-Cascade  : ", theme::style_subtext()),
             Span::styled(
-                if app.auto_cascade { "⚡ ON (Auto-advance on failure)" } else { "OFF (Single-tier only)" },
+                if app.auto_cascade { "ON (Auto-advance on failure)" } else { "OFF (Single-tier only)" },
                 if app.auto_cascade { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() },
             ),
             Span::styled("  [T: Toggle]", Style::default().fg(Color::DarkGray)),
@@ -170,13 +170,13 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
 
     if let Some(key) = &app.found_key {
         lines.push(Line::from(vec![
-            Span::styled("  ✨ RECOVERED KEY: ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled("  [+] RECOVERED KEY: ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             Span::styled(format!("\"{}\"", key), Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
         ]));
     } else if app.worker_state == WorkerState::Exhausted {
         lines.push(Line::from(vec![
             Span::styled("  Engine Status : ", theme::style_subtext()),
-            Span::styled("❌ SEARCH EXHAUSTED (0 Matches in Selected Tier)", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("[-] SEARCH EXHAUSTED (0 Matches in Selected Tier)", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
         ]));
     } else {
         lines.push(Line::from(vec![
@@ -187,8 +187,8 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
                     WorkerState::Running   => "▶ RUNNING (Active Pipeline)",
                     WorkerState::Paused    => "⏸ PAUSED",
                     WorkerState::Stopped   => "■ STOPPED",
-                    WorkerState::Completed => "✔ KEY FOUND",
-                    WorkerState::Exhausted => "❌ SEARCH EXHAUSTED",
+                    WorkerState::Completed => "[+] KEY FOUND",
+                    WorkerState::Exhausted => "[-] SEARCH EXHAUSTED",
                 },
                 theme::status_style(match app.worker_state {
                     WorkerState::Idle      => "READY",

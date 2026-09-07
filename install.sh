@@ -21,7 +21,7 @@ RESET='\033[0m'
 
 echo -e "${CYAN}${BOLD}"
 echo "  ╔═══════════════════════════════════════════════════════════════╗"
-echo "  ║        🔐  TORCRYPT — UNIVERSAL CLI & TUI INSTALLER           ║"
+echo "  ║          TORCRYPT — UNIVERSAL CLI & TUI INSTALLER             ║"
 echo "  ╚═══════════════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
@@ -65,7 +65,7 @@ if curl -fsSL --connect-timeout 8 "${DOWNLOAD_URL}" -o "${TEMP_BIN}" 2>/dev/null
     if "${TEMP_BIN}" --help >/dev/null 2>&1 || [ $? -le 2 ]; then
         mv "${TEMP_BIN}" "${TARGET_PATH}"
         INSTALLED=true
-        echo -e "${GREEN}[✔] Verified and installed static release binary.${RESET}"
+        echo -e "${GREEN}[+] Verified and installed static release binary.${RESET}"
     fi
 fi
 rm -f "${TEMP_BIN}"
@@ -83,7 +83,7 @@ if [ "${INSTALLED}" = false ]; then
         "${CARGO_BIN}" build --release
         install -m755 "target/release/${BIN_NAME}" "${TARGET_PATH}"
         rm -rf "${TEMP_DIR}"
-        echo -e "${GREEN}[✔] Successfully compiled and installed native binary.${RESET}"
+        echo -e "${GREEN}[+] Successfully compiled and installed native binary.${RESET}"
     else
         echo -e "${RED}[-] Error: Rust/Cargo required for build.${RESET}"
         exit 1
@@ -93,7 +93,7 @@ fi
 # 4. Create Shortcuts
 ln -sf "${TARGET_PATH}" "${INSTALL_DIR}/${ALIAS_NAME}"
 ln -sf "${TARGET_PATH}" "${INSTALL_DIR}/${SHORT_ALIAS}"
-echo -e "${GREEN}[✔] Shortcuts created:${RESET} ${BOLD}${INSTALL_DIR}/${ALIAS_NAME}${RESET} and ${BOLD}${INSTALL_DIR}/${SHORT_ALIAS}${RESET}"
+echo -e "${GREEN}[+] Shortcuts created:${RESET} ${BOLD}${INSTALL_DIR}/${ALIAS_NAME}${RESET} and ${BOLD}${INSTALL_DIR}/${SHORT_ALIAS}${RESET}"
 
 # 5. Ensure ~/.local/bin is in PATH
 SHELL_CONFIGS=("${HOME}/.bashrc" "${HOME}/.zshrc" "${HOME}/.profile")
@@ -118,17 +118,22 @@ prompt_user() {
     fi
     echo "${reply:-$default_val}"
 }
-RUN_SETUP=false
-if [ "${IS_UPDATE}" = true ]; then
+RECONFIG_REQUESTED=false
+for arg in "$@"; do
+    if [ "$arg" = "--reconfigure" ] || [ "$arg" = "-r" ] || [ "$arg" = "--setup" ]; then
+        RECONFIG_REQUESTED=true
+    fi
+done
+if [ "$TORCRYPT_RECONFIGURE" = "1" ]; then
+    RECONFIG_REQUESTED=true
+fi
+
+if [ "${IS_UPDATE}" = true ] && [ "${RECONFIG_REQUESTED}" = false ]; then
     echo ""
-    echo -e "${GREEN}[✔] TORCRYPT binary updated successfully!${RESET}"
+    echo -e "${GREEN}[+] TORCRYPT binary updated successfully!${RESET}"
     echo -e "${CYAN}    Existing backends and wordlists have been retained.${RESET}"
-    echo ""
-    reconfig=$(prompt_user "  Reconfigure external backends & download wordlists? [y/N]" "N")
-    case "${reconfig}" in
-        y|Y|yes|YES) RUN_SETUP=true ;;
-        *) RUN_SETUP=false ;;
-    esac
+    echo -e "${CYAN}    (To reconfigure backends or wordlists, run with --reconfigure)${RESET}"
+    RUN_SETUP=false
 else
     RUN_SETUP=true
 fi
@@ -137,7 +142,7 @@ if [ "${RUN_SETUP}" = true ]; then
     # 7. Interactive External Decryption Backends
 echo ""
 echo -e "${CYAN}  ┌─────────────────────────────────────────────────────────────┐${RESET}"
-echo -e "${CYAN}  │ ⚡ STEP 1: EXTERNAL DECRYPTION GUI ENGINES (OPTIONAL)        │${RESET}"
+echo -e "${CYAN}  │  STEP 1: EXTERNAL DECRYPTION GUI ENGINES (OPTIONAL)         │${RESET}"
 echo -e "${CYAN}  └─────────────────────────────────────────────────────────────┘${RESET}"
 echo -e "  TORCRYPT operates as a GUI frontend for high-speed recovery tools:"
 echo -e "    ${BOLD}[1] Hashcat${RESET} (GPU / OpenCL / CUDA Acceleration)"
@@ -187,7 +192,7 @@ fi
 # 8. Interactive Wordlists Download
 echo ""
 echo -e "${CYAN}  ┌─────────────────────────────────────────────────────────────┐${RESET}"
-echo -e "${CYAN}  │ 📖 STEP 2: DICTIONARY WORDLISTS                             │${RESET}"
+echo -e "${CYAN}  │  STEP 2: DICTIONARY WORDLISTS                               │${RESET}"
 echo -e "${CYAN}  └─────────────────────────────────────────────────────────────┘${RESET}"
 echo -e "  TORCRYPT includes a 27K built-in corpus. Real-world wordlists"
 echo -e "  enable recovery of millions of complex passwords:"
@@ -208,7 +213,7 @@ if [ "${wl_choice}" = "1" ] || [ "${wl_choice}" = "2" ] || [ "${wl_choice}" = "3
         ROCKYOU_URL="https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt"
         echo -e "${CYAN}[*] Downloading RockYou.txt (14.3M passwords, ~134 MB)...${RESET}"
         if curl -fSL --progress-bar "${ROCKYOU_URL}" -o "${ROCKYOU_PATH}"; then
-            echo -e "${GREEN}[✔] Saved RockYou wordlist to: ${ROCKYOU_PATH}${RESET}"
+            echo -e "${GREEN}[+] Saved RockYou wordlist to: ${ROCKYOU_PATH}${RESET}"
         fi
     fi
     if [ "${wl_choice}" = "2" ] || [ "${wl_choice}" = "3" ]; then
@@ -216,7 +221,7 @@ if [ "${wl_choice}" = "1" ] || [ "${wl_choice}" = "2" ] || [ "${wl_choice}" = "3
         TOP100K_URL="https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10-million-password-list-top-100000.txt"
         echo -e "${CYAN}[*] Downloading SecLists Top-100k...${RESET}"
         if curl -fSL --silent "${TOP100K_URL}" -o "${TOP100K_PATH}"; then
-            echo -e "${GREEN}[✔] Saved Top-100k wordlist to: ${TOP100K_PATH}${RESET}"
+            echo -e "${GREEN}[+] Saved Top-100k wordlist to: ${TOP100K_PATH}${RESET}"
         fi
     fi
 else
@@ -227,9 +232,9 @@ fi
 echo ""
 echo -e "${GREEN}${BOLD}═════════════════════════════════════════════════════════════════${RESET}"
 if [ "${IS_UPDATE}" = true ]; then
-    echo -e "${GREEN}${BOLD}  ✨ TORCRYPT update complete!${RESET}"
+    echo -e "${GREEN}${BOLD}  [+] TORCRYPT update complete!${RESET}"
 else
-    echo -e "${GREEN}${BOLD}  ✨ TORCRYPT installation complete!${RESET}"
+    echo -e "${GREEN}${BOLD}  [+] TORCRYPT installation complete!${RESET}"
 fi
 echo -e "${GREEN}${BOLD}═════════════════════════════════════════════════════════════════${RESET}"
 echo -e "  Executable : ${BOLD}${TARGET_PATH}${RESET}"

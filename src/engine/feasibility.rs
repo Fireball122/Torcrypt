@@ -13,11 +13,11 @@ pub enum FeasibilityTier {
 impl FeasibilityTier {
     pub fn display_badge(&self) -> (&'static str, &'static str) {
         match self {
-            FeasibilityTier::Trivial     => ("⚡ TRIVIAL (<5s)", "Instant exhaustive search"),
-            FeasibilityTier::Practical   => ("✔ PRACTICAL (<2h)", "Realistic candidate recovery window"),
-            FeasibilityTier::Feasible    => ("⏱ FEASIBLE (<7d)", "Feasible with continuous compute allocation"),
-            FeasibilityTier::Impractical => ("⚠️ IMPRACTICAL (>7d)", "Warning: High compute expenditure; recommend dictionary/rules"),
-            FeasibilityTier::Infeasible  => ("🔒 INFEASIBLE (>1y)", "Cryptographically secure parameter; brute-force will fail"),
+            FeasibilityTier::Trivial     => ("TRIVIAL (<5s)", "Instant exhaustive search"),
+            FeasibilityTier::Practical   => ("PRACTICAL (<2h)", "Realistic candidate recovery window"),
+            FeasibilityTier::Feasible    => ("FEASIBLE (<7d)", "Feasible with continuous compute allocation"),
+            FeasibilityTier::Impractical => ("IMPRACTICAL (>7d)", "Warning: High compute expenditure; recommend dictionary/rules"),
+            FeasibilityTier::Infeasible  => ("INFEASIBLE (>1y)", "Cryptographically secure parameter; brute-force will fail"),
         }
     }
 }

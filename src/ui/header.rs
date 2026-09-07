@@ -67,17 +67,17 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
         WorkerState::Running   => ("● RUNNING",   theme::style_neon()),
         WorkerState::Paused    => ("⏸ PAUSED",    theme::style_amber()),
         WorkerState::Stopped   => ("■ STOPPED",   theme::style_red()),
-        WorkerState::Completed => ("✨ FOUND",     theme::style_neon()),
-        WorkerState::Exhausted => ("❌ EXHAUSTED", theme::style_amber()),
+        WorkerState::Completed => ("● FOUND",     theme::style_neon()),
+        WorkerState::Exhausted => ("● EXHAUSTED", theme::style_amber()),
     };
 
     let now = Utc::now().format("%H:%M:%S UTC").to_string();
 
     let backend_span = match app.active_backend {
-        crate::engine::backends::BackendType::Hashcat   => Span::styled(" [⚡ HASHCAT] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        crate::engine::backends::BackendType::John      => Span::styled(" [🔨 JOHN] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        crate::engine::backends::BackendType::Fcrackzip => Span::styled(" [📦 FCRACKZIP] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-        crate::engine::backends::BackendType::Native    => Span::styled(" [🦀 NATIVE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::Hashcat   => Span::styled(" [HASHCAT] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::John      => Span::styled(" [JOHN] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::Fcrackzip => Span::styled(" [FCRACKZIP] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::Native    => Span::styled(" [NATIVE] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
         crate::engine::backends::BackendType::None      => Span::raw(""),
     };
 

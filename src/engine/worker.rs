@@ -261,7 +261,7 @@ impl DecryptionWorker {
                             level:   LogLevel::Lock,
                             path:    self.target_path.clone(),
                             message: format!(
-                                "⚡ GUI Dispatch to {}: {}",
+                                "[+] GUI Dispatch to {}: {}",
                                 effective_backend.display_name(),
                                 bin.display()
                             ),
@@ -333,7 +333,7 @@ impl DecryptionWorker {
                     let _ = self.tel_tx.send(TelemetryEvent::Log {
                         level:   LogLevel::Lock,
                         path:    self.target_path.clone(),
-                        message: format!("✨ POTFILE HIT VERIFIED: \"{}\"", formatted_key),
+                        message: format!("[+] POTFILE HIT VERIFIED: \"{}\"", formatted_key),
                     });
                     self.worker_state = WorkerState::Completed;
                     return;
@@ -508,7 +508,7 @@ impl DecryptionWorker {
             level:   LogLevel::Err,
             path:    self.target_path.clone(),
             message: format!(
-                "❌ FORMAT NOT RECOVERABLE: '{}' ({}) has no native in-process cracker and no external backend (Hashcat / John the Ripper) was found in PATH.",
+                "[-] FORMAT NOT RECOVERABLE: '{}' ({}) has no native in-process cracker and no external backend (Hashcat / John the Ripper) was found in PATH.",
                 self.target_path, self.cipher_suite
             ),
         });
@@ -600,7 +600,7 @@ impl DecryptionWorker {
                 let _ = self.tel_tx.send(TelemetryEvent::Log {
                     level:   LogLevel::Lock,
                     path:    self.target_path.clone(),
-                    message: format!("✨ KEY RECOVERED BY BACKEND: \"{}\"", formatted_key),
+                    message: format!("[+] KEY RECOVERED BY BACKEND: \"{}\"", formatted_key),
                 });
                 if let Ok(db) = crate::engine::SessionDatabase::init() {
                     let _ = db.potfile_insert(&self.target_path, &cracked_key, &self.cipher_suite);
@@ -666,7 +666,7 @@ impl DecryptionWorker {
                         level:   LogLevel::Warn,
                         path:    self.target_path.clone(),
                         message: format!(
-                            "❌ SEARCH EXHAUSTED: Password not found in {} ({} candidates tested)",
+                            "[-] SEARCH EXHAUSTED: Password not found in {} ({} candidates tested)",
                             self.active_strategy,
                             fmt_num(self.items_done)
                         ),
@@ -734,7 +734,7 @@ impl DecryptionWorker {
                     let _ = self.tel_tx.send(TelemetryEvent::Log {
                         level:   LogLevel::Lock,
                         path:    self.target_path.clone(),
-                        message: format!("✨ KEY RECOVERED: \"{}\" │ {}", formatted_key, hit_desc),
+                        message: format!("[+] KEY RECOVERED: \"{}\" │ {}", formatted_key, hit_desc),
                     });
 
                     let _ = self.tel_tx.send(TelemetryEvent::Log {

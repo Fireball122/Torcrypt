@@ -40,7 +40,7 @@ fn render_progress_bar(frame: &mut Frame, area: Rect, app: &AppState) {
             .block(
                 Block::default()
                     .title(Line::from(vec![
-                        Span::styled(" ⚙ BENCHMARK RUNNING — press [B] to stop ", theme::style_amber()),
+                        Span::styled(" [BENCHMARK RUNNING] — press [B] to stop ", theme::style_amber()),
                     ]))
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
@@ -188,9 +188,9 @@ fn render_matrix_table(frame: &mut Frame, area: Rect, app: &AppState) {
             };
 
             let hw = if r.hw_accel {
-                Cell::from("✔ YES").style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                Cell::from("YES").style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
             } else {
-                Cell::from("✖ NO").style(Style::default().fg(Color::Red))
+                Cell::from("NO").style(Style::default().fg(Color::Red))
             };
 
             let prefix = if i == app.bench_selected { "▶ " } else { "  " };

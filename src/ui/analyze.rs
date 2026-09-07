@@ -48,7 +48,7 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
         .border_style(theme::style_border());
 
     let path_p = Paragraph::new(Line::from(vec![
-        Span::styled(" 📁 ", Style::default()),
+        Span::styled(" [PATH] ", theme::style_subtext()),
         Span::styled(truncate(&cur_path_str, area.width.saturating_sub(10) as usize),
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
     ]))
@@ -176,21 +176,21 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
     let a = &app.analysis;
 
     let (lock_badge, lock_style) = if a.is_encrypted {
-        ("🔒 LOCKED CONTAINER / CAPTURE", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        ("LOCKED CONTAINER / CAPTURE", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
     } else if a.mime_type.contains("Directory") {
-        ("📁 DIRECTORY / FOLDER", Style::default().fg(Color::Cyan))
+        ("DIRECTORY / FOLDER", Style::default().fg(Color::Cyan))
     } else {
-        ("🔓 UNENCRYPTED / PLAINTEXT", Style::default().fg(Color::DarkGray))
+        ("UNENCRYPTED / PLAINTEXT", Style::default().fg(Color::DarkGray))
     };
 
     let entropy_pct = ((a.entropy / 8.0) * 100.0).clamp(0.0, 100.0) as u16;
 
     let engine_badge = match a.recommended_engine {
-        ComputeEngine::GpuPrimary  => (format!("🚀 {}", app.sys_gpu_name), Color::Green),
-        ComputeEngine::Hybrid      => (format!("⚡ HYBRID ({} + {})", app.sys_cpu, app.sys_gpu_name), Color::Cyan),
-        ComputeEngine::CpuSimd     => (format!("⚙ {}", app.sys_cpu), Color::Yellow),
-        ComputeEngine::TlsKeylog   => ("🔑 TLS 1.3 KEYLOG STREAM DECRYPTOR".into(), Color::Green),
-        ComputeEngine::PcapInspect => ("📡 PCAP PROTOCOL CREDENTIAL EXTRACTOR".into(), Color::Cyan),
+        ComputeEngine::GpuPrimary  => (format!("GPU ({})", app.sys_gpu_name), Color::Green),
+        ComputeEngine::Hybrid      => (format!("HYBRID ({} + {})", app.sys_cpu, app.sys_gpu_name), Color::Cyan),
+        ComputeEngine::CpuSimd     => (format!("CPU ({})", app.sys_cpu), Color::Yellow),
+        ComputeEngine::TlsKeylog   => ("TLS 1.3 KEYLOG STREAM DECRYPTOR".into(), Color::Green),
+        ComputeEngine::PcapInspect => ("PCAP PROTOCOL CREDENTIAL EXTRACTOR".into(), Color::Cyan),
     };
 
     let lines = vec![
@@ -315,13 +315,13 @@ fn render_engine_selector_card(frame: &mut Frame, area: Rect, app: &AppState) {
             );
 
             let status_cell = if installed {
-                Cell::from("INSTALLED ✔").style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                Cell::from("INSTALLED").style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
             } else {
                 Cell::from("NOT DETECTED").style(Style::default().fg(Color::DarkGray))
             };
 
             let rec_cell = if is_rec {
-                Cell::from(format!("⚡ RECOMMENDED: {}", rec.reason))
+                Cell::from(format!("[RECOMMENDED] {}", rec.reason))
                     .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
             } else {
                 Cell::from("").style(theme::style_dim())
@@ -416,7 +416,7 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
             Span::styled(format!("   [{}] ", i + 1), Style::default().fg(Color::DarkGray).bg(Color::Indexed(237)))
         };
         let rec_badge = if opt.is_auto_recommended {
-            Span::styled(" ⚡(AUTO-RECOMMENDED)", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            Span::styled(" [AUTO-RECOMMENDED]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
         } else {
             Span::raw("")
         };
@@ -504,7 +504,7 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
         Span::styled(format!(" Launch via {} ", resolved.short_name()), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
     ];
     if is_rec {
-        spans.push(Span::styled("⚡(RECOMMENDED) ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(" [RECOMMENDED] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
     }
     spans.push(Span::styled(format!("({}) ", active_label), Style::default().fg(Color::White)));
     spans.push(Span::styled(" │ [E] Switch Backend: ", theme::style_subtext()));

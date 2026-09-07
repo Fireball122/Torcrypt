@@ -430,7 +430,7 @@ impl AppState {
                             is_parent:    false,
                             size_bytes:   0,
                             is_encrypted: false,
-                            badge:        "📁 [DIR]".into(),
+                            badge:        "[DIR]".into(),
                         });
                     } else {
                         let size = meta.len();
@@ -508,9 +508,9 @@ impl AppState {
         // Potfile / Historical Session Cache lookup
         if let Some(db) = &self.session_db {
             if let Some(cached_pwd) = db.potfile_lookup(&self.analysis.file_path) {
-                self.analysis.recommended_attack = format!("✨ [POTFILE CACHED] Password: {}", cached_pwd);
+                self.analysis.recommended_attack = format!("[POTFILE CACHED] Password: {}", cached_pwd);
             } else if let Some(cached) = self.sessions.iter().find(|s| s.target == self.analysis.file_path && s.status == "DECRYPTED") {
-                self.analysis.recommended_attack = format!("✨ [POTFILE CACHED] Solved in session {} ({})", cached.id, cached.created_at);
+                self.analysis.recommended_attack = format!("[POTFILE CACHED] Solved in session {} ({})", cached.id, cached.created_at);
             }
         }
         self.attack_options = generate_attack_options(&self.analysis, self.sys_gpu_available);
@@ -790,7 +790,7 @@ impl AppState {
                     self.add_log(
                         LogLevel::Warn,
                         &target_path,
-                        &format!("⚡ Tier '{}' exhausted (0 matches). Auto-cascading to: {}", prev_title, next_opt.title),
+                        &format!("[!] Tier '{}' exhausted (0 matches). Auto-cascading to: {}", prev_title, next_opt.title),
                     );
 
                     self.launch_attack_from_analysis();
@@ -808,7 +808,7 @@ impl AppState {
                 self.add_log(
                     LogLevel::Err,
                     &target_path,
-                    &format!("❌ ALL ATTACK TIERS EXHAUSTED: Tested {} candidates without finding key.", fmt_num(self.items_done)),
+                    &format!("[-] ALL ATTACK TIERS EXHAUSTED: Tested {} candidates without finding key.", fmt_num(self.items_done)),
                 );
 
                 let new_ses_id = format!("SES-{}", 1000 + (self.tick % 8999));
@@ -1016,9 +1016,9 @@ impl AppState {
                     self.custom_wordlist = next_wl;
                     if let Some(p) = &self.custom_wordlist {
                         let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        self.add_log(LogLevel::Lock, "", &format!("📖 Active Wordlist Cycled: {}", name));
+                        self.add_log(LogLevel::Lock, "", &format!("[+] Active Wordlist Cycled: {}", name));
                     } else {
-                        self.add_log(LogLevel::Info, "", "📖 Wordlist reset to built-in dictionary");
+                        self.add_log(LogLevel::Info, "", "[+] Wordlist reset to built-in dictionary");
                     }
                 } else if let Some(entry) = self.dir_entries.get(self.file_selected_idx) {
                     if !entry.is_dir && !entry.is_parent {
@@ -1039,7 +1039,7 @@ impl AppState {
                 } else {
                     "DISABLED (Single strategy pass only)"
                 };
-                self.add_log(LogLevel::Lock, "", &format!("⚡ Auto-Cascade Succession: {}", state_str));
+                self.add_log(LogLevel::Lock, "", &format!("[+] Auto-Cascade Succession: {}", state_str));
             }
             'm' | 'M' if self.current_tab == Tab::Analyze => {
                 self.mask_modal_open = true;
@@ -1057,7 +1057,7 @@ impl AppState {
                 );
                 let name = self.active_backend.display_name();
                 let sel_name = self.backend_selection.display_name();
-                self.add_log(LogLevel::Lock, "", &format!("⚡ Decryption Backend Switched: {} ({})", name, sel_name));
+                self.add_log(LogLevel::Lock, "", &format!("[+] Decryption Backend Switched: {} ({})", name, sel_name));
 
                 if self.worker_state == WorkerState::Running && self.analysis.ready_to_crack {
                     self.add_log(LogLevel::Info, "", "Transferring active attack pipeline to new backend...");
@@ -1068,7 +1068,7 @@ impl AppState {
                 match export_audit_report(&self.analysis, &self.sessions, &self.current_dir) {
                     Ok(path) => {
                         let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        self.add_log(LogLevel::Lock, "", &format!("✨ Cryptographic Audit Report exported: {}", name));
+                        self.add_log(LogLevel::Lock, "", &format!("[+] Cryptographic Audit Report exported: {}", name));
                     }
                     Err(e) => {
                         self.add_log(LogLevel::Err, "", &format!("Audit report export failed: {}", e));
@@ -1079,7 +1079,7 @@ impl AppState {
                 match export_audit_report(&self.analysis, &self.sessions, &self.current_dir) {
                     Ok(path) => {
                         let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        self.add_log(LogLevel::Lock, "", &format!("✨ Cryptographic Audit Report exported: {}", name));
+                        self.add_log(LogLevel::Lock, "", &format!("[+] Cryptographic Audit Report exported: {}", name));
                     }
                     Err(e) => {
                         self.add_log(LogLevel::Err, "", &format!("Audit report export failed: {}", e));
@@ -1294,7 +1294,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
         };
         options.push(make_opt(
             "auto",
-            "⚡ [AUTO-DETECT] Smart Context Decryption Pipeline",
+            "[AUTO-DETECT] Smart Context Decryption Pipeline",
             auto_desc,
             "Dynamic Profile",
             if analysis.recommended_engine == ComputeEngine::TlsKeylog || analysis.recommended_engine == ComputeEngine::PcapInspect { 1 } else { 14_344_392 },
@@ -1307,7 +1307,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "mask_10d",
-            "🔢 10-Digit Full Numeric PIN Mask (?d?d?d?d?d?d?d?d?d?d)",
+            "[10-Digit PIN Mask] (?d?d?d?d?d?d?d?d?d?d)",
             "Exhaustive 0000000000–9999999999 GPU DMA stream (WPS / Router Default PINs)",
             "10,000,000,000 Keyspace",
             10_000_000_000,
@@ -1320,7 +1320,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "wordlist_prod",
-            "📖 Wi-Fi & RockYou Production Corpus (14,344,392 Words)",
+            "[Wi-Fi & RockYou Production Corpus] (14,344,392 Words)",
             "Standard wireless wordlist + Best64 common mutation rules",
             "14.34M Candidates",
             14_344_392,
@@ -1333,7 +1333,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "rules_mut",
-            "⚙️ Rule Mutations & SSID Suffix Permutations (WinterStorm?d?d?d?d!)",
+            "[Rule Mutations & SSID Suffixes] (WinterStorm?d?d?d?d!)",
             "Target network SSID tokens mutated with 4-digit years & symbol affixes",
             "100,000,000 Keyspace",
             100_000_000,
@@ -1346,7 +1346,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "pcap_stream",
-            "📡 Protocol Stream Extractor (HTTP Basic/Digest, FTP, TLS 1.3)",
+            "[Protocol Stream Extractor] (HTTP Basic/Digest, FTP, TLS 1.3)",
             "Extracts plaintext credentials, challenge-response auth, and session master secrets",
             "Packet Stream Pass",
             1,
@@ -1359,7 +1359,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
     } else if is_archive {
         options.push(make_opt(
             "auto",
-            "⚡ [AUTO-DETECT] Multi-Tier Archive Decryption Pipeline",
+            "[AUTO-DETECT] Multi-Tier Archive Decryption Pipeline",
             &format!("Smart routing for {} -> Leveled dictionary pass + GPU rules", analysis.lock_type),
             "Dynamic Tier",
             14_344_392,
@@ -1372,7 +1372,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "wordlist_prod",
-            "📖 Standard Production Corpus (14,344,392 Candidates)",
+            "[Standard Production Corpus] (14,344,392 Candidates)",
             "RockYou full dictionary + Best64 mutation rules (General real-world use)",
             "14.34M Candidates",
             14_344_392,
@@ -1385,7 +1385,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "mask_10d",
-            "🔢 10-Digit Full Numeric PIN Mask (?d?d?d?d?d?d?d?d?d?d)",
+            "[10-Digit Numeric PIN Mask] (?d?d?d?d?d?d?d?d?d?d)",
             "Full 0000000000–9999999999 numeric keyspace via GPU batch generation",
             "10,000,000,000 Keyspace",
             10_000_000_000,
@@ -1398,7 +1398,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "mask_pattern:?u?l?l?l?d?d",
-            "🎭 Hybrid Charset Mask (?u?l?l?l?d?d — 6-Char Alnum)",
+            "[Hybrid Charset Mask] (?u?l?l?l?d?d — 6-Char Alnum)",
             "1 Uppercase + 3 Lowercase + 2 Digits (e.g. Pass01, Test99)",
             "45.7M Keyspace",
             45_697_600,
@@ -1411,7 +1411,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "wordlist_fast",
-            "⚡ High-Frequency Fast Pass (10,111 Passwords & PINs)",
+            "[High-Frequency Fast Pass] (10,111 Passwords & PINs)",
             "Embedded top-frequency password dictionary + 0000..9999 PINs",
             "10,111 Candidates",
             10_111,
@@ -1424,7 +1424,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
     } else {
         options.push(make_opt(
             "auto",
-            "⚡ [AUTO-DETECT] Hardware-Optimized Cryptographic Pipeline",
+            "[AUTO-DETECT] Hardware-Optimized Cryptographic Pipeline",
             &format!("Auto-allocates {} for {}", analysis.recommended_engine.display_name(), analysis.lock_type),
             "Dynamic Profile",
             14_344_392,
@@ -1437,7 +1437,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "wordlist_prod",
-            "📖 Standard Production Corpus (14,344,392 Candidates)",
+            "[Production Wordlist Corpus] (14.34M Candidates)",
             "RockYou dictionary + Best64 mutation rules via GPU stream compute",
             "14.34M Candidates",
             14_344_392,
@@ -1450,7 +1450,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "mask_10d",
-            "🔢 10-Digit Numeric Recovery Mask (?d?d?d?d?d?d?d?d?d?d)",
+            "[6-Digit Numeric PIN Mask] (?d?d?d?d?d?d)",
             "0000000000–9999999999 full recovery PIN & numeric matrix keyspace",
             "10,000,000,000 Keyspace",
             10_000_000_000,
@@ -1463,7 +1463,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "advanced_100m",
-            "⚡ Advanced Hardened Multi-Corpus (100,000,000+ Keyspace)",
+            "[Hybrid Alpha-Numeric Mask] (?u?l?l?l?d?d)",
             "Multi-corpus + Markov n-grams + Hybrid rule mutations + Custom masks",
             "100M+ Keyspace",
             100_000_000,
@@ -1476,7 +1476,7 @@ pub fn generate_attack_options(analysis: &FileAnalysis, gpu_available: bool) -> 
 
         options.push(make_opt(
             "wordlist_fast",
-            "⚡ High-Frequency Fast Pass (10,111 Passwords)",
+            "[Embedded High-Frequency Corpus] (10,000 Candidates)",
             "Embedded top-frequency password dictionary (Instant verification check)",
             "10,111 Candidates",
             10_111,
@@ -1498,66 +1498,66 @@ fn detect_file_badge(path: &Path, name: &str) -> (String, bool) {
 
     // 1. Explicit Non-Encrypted Helper & Text Extensions
     if lower.ends_with(".json") || lower.ends_with(".toml") || lower.ends_with(".yaml") || lower.ends_with(".yml") || lower.ends_with(".xml") {
-        return ("⚙ [CONF]".into(), false);
+        return ("[CONF]".into(), false);
     }
     if lower.ends_with(".md") || lower.ends_with(".rst") || lower.ends_with(".txt") || lower.ends_with(".csv") {
-        return ("📄 [DOC]".into(), false);
+        return ("[DOC]".into(), false);
     }
     if lower.ends_with(".crt") || lower.ends_with(".cer") || lower.ends_with(".pem") || lower.ends_with(".pub") {
-        return ("📜 [CERT]".into(), false);
+        return ("[CERT]".into(), false);
     }
     if lower.ends_with(".log") {
-        return ("📋 [LOG]".into(), false);
+        return ("[LOG]".into(), false);
     }
     if lower.ends_with(".rs") || lower.ends_with(".cpp") || lower.ends_with(".c") || lower.ends_with(".h") || lower.ends_with(".py") || lower.ends_with(".sh") || lower.ends_with(".bat") || lower.ends_with(".ps1") {
-        return ("💻 [CODE]".into(), false);
+        return ("[CODE]".into(), false);
     }
 
     // 2. Cryptographic & Protocol Targets
     if lower.ends_with(".zip") {
-        ("🔒 [ZIP]".into(), true)
+        ("[ZIP]".into(), true)
     } else if lower.contains("tls") || lower.contains("https") || lower.contains("ssl") {
-        ("🌐 [TLS]".into(), true)
+        ("[TLS]".into(), true)
     } else if lower.contains("http") || lower.contains("basic_auth") || lower.contains("digest") {
-        ("🔑 [HTTP]".into(), true)
+        ("[HTTP]".into(), true)
     } else if lower.contains("ftp") || lower.contains("auth_traffic") {
-        ("📡 [FTP]".into(), true)
+        ("[FTP]".into(), true)
     } else if lower.ends_with(".pcap") || lower.ends_with(".pcapng") || lower.ends_with(".cap") {
         if lower.contains("wpa") || lower.contains("wifi") || lower.contains("handshake") || lower.contains("pmkid") {
-            ("📡 [WPA]".into(), true)
+            ("[WPA]".into(), true)
         } else {
-            ("📦 [PCAP]".into(), true)
+            ("[PCAP]".into(), true)
         }
     } else if lower.ends_with(".hccapx") || lower.ends_with(".22000") {
-        ("📶 [WPA]".into(), true)
+        ("[WPA]".into(), true)
     } else if lower.ends_with(".pdf") {
-        ("📄 [PDF]".into(), true)
+        ("[PDF]".into(), true)
     } else if lower.ends_with(".rar") {
-        ("📦 [RAR]".into(), true)
+        ("[RAR]".into(), true)
     } else if lower.ends_with(".7z") {
-        ("📦 [7ZIP]".into(), true)
+        ("[7ZIP]".into(), true)
     } else if lower.ends_with(".kdbx") || lower.ends_with(".kdb") {
-        ("🔐 [KDBX]".into(), true)
+        ("[KDBX]".into(), true)
     } else if lower.ends_with(".docx") || lower.ends_with(".xlsx") || lower.ends_with(".pptx") || lower.ends_with(".doc") {
-        ("📊 [DOC]".into(), true)
+        ("[OFFICE]".into(), true)
     } else if lower.ends_with(".vmdk") || lower.ends_with(".vhdx") || lower.ends_with(".vdi") {
-        ("💾 [DISK]".into(), true)
+        ("[DISK]".into(), true)
     } else if lower.ends_with(".tc") || lower.ends_with(".vc") || lower.ends_with(".hc") {
-        ("🔐 [VERA]".into(), true)
+        ("[VERA]".into(), true)
     } else if lower.ends_with(".dmg") || lower.ends_with(".sparseimage") {
-        ("🍎 [DMG]".into(), true)
+        ("[DMG]".into(), true)
     } else if lower.ends_with(".wallet") || lower.ends_with(".dat") || lower.contains("keystore") {
-        ("🪙 [COIN]".into(), true)
+        ("[WALLET]".into(), true)
     } else if lower.ends_with(".p12") || lower.ends_with(".pfx") {
-        ("🔑 [CERT]".into(), true)
+        ("[KEY]".into(), true)
     } else if lower.ends_with(".enc") || lower.ends_with(".aes") || lower.ends_with(".vault") {
-        ("🔐 [ENC]".into(), true)
+        ("[ENC]".into(), true)
     } else if lower.ends_with(".hash") {
-        ("🔑 [HASH]".into(), true)
+        ("[HASH]".into(), true)
     } else if lower.ends_with(".dict") || lower.ends_with(".wordlist") || lower.ends_with(".lst") || lower.contains("pass") || lower.contains("rockyou") {
-        ("📖 [DICT]".into(), false)
+        ("[DICT]".into(), false)
     } else {
-        ("📄 [FILE]".into(), false)
+        ("[FILE]".into(), false)
     }
 }
 

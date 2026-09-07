@@ -15,11 +15,11 @@ pub enum BackendType {
 impl BackendType {
     pub fn display_name(&self) -> &'static str {
         match self {
-            BackendType::Hashcat   => "⚡ Hashcat (GPU/OpenCL Accelerator)",
-            BackendType::John      => "🔨 John the Ripper (Multi-Core SIMD)",
-            BackendType::Fcrackzip => "📦 fcrackzip (Optimized ZIP Cracker)",
-            BackendType::Native    => "🦀 Native In-Process Engine (AVX2 SIMD)",
-            BackendType::None      => "✖ Unsupported Format",
+            BackendType::Hashcat   => "Hashcat (GPU/OpenCL Accelerator)",
+            BackendType::John      => "John the Ripper (Multi-Core SIMD)",
+            BackendType::Fcrackzip => "fcrackzip (Optimized ZIP Cracker)",
+            BackendType::Native    => "Native Engine (In-Process AVX2)",
+            BackendType::None      => "Unsupported Format",
         }
     }
 
@@ -539,13 +539,13 @@ impl BackendCatalog {
     pub fn summary(&self) -> String {
         let mut tools = Vec::new();
         if let Some(p) = &self.hashcat {
-            tools.push(format!("⚡ Hashcat ({})", p.display()));
+            tools.push(format!("Hashcat ({})", p.display()));
         }
         if let Some(p) = &self.john {
-            tools.push(format!("🔨 John ({})", p.display()));
+            tools.push(format!("John ({})", p.display()));
         }
         if let Some(p) = &self.fcrackzip {
-            tools.push(format!("📦 fcrackzip ({})", p.display()));
+            tools.push(format!("fcrackzip ({})", p.display()));
         }
         if let Some(p) = &self.zip2john {
             tools.push(format!("zip2john ({})", p.display()));

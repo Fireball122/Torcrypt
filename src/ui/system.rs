@@ -93,7 +93,7 @@ fn render_gpu_card(frame: &mut Frame, area: Rect, app: &AppState) {
             Span::raw("─ ◈ "),
             Span::styled("DISCRETE GPU ACCELERATOR", theme::style_title()),
             if app.sys_gpu_available {
-                Span::styled(" [HARDWARE ACCELERATED ✔] ", theme::style_neon())
+                Span::styled(" [HARDWARE ACCELERATED] ", theme::style_neon())
             } else {
                 Span::styled(" [CPU EXECUTION] ", theme::style_amber())
             },
@@ -220,9 +220,9 @@ fn render_crypto_flags(frame: &mut Frame, area: Rect, app: &AppState) {
         .iter()
         .map(|(name, enabled, desc)| {
             let (badge, style) = if *enabled {
-                ("ENABLED ✔", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                ("ENABLED", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
             } else {
-                ("DISABLED ✖", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+                ("DISABLED", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
             };
             Row::new(vec![
                 Cell::from(*name).style(theme::style_subtext()),
@@ -297,7 +297,7 @@ fn render_external_tools_card(frame: &mut Frame, area: Rect, app: &AppState) {
         .into_iter()
         .map(|(name, typ, path, role)| {
             let (status_badge, status_style) = if path.is_some() {
-                ("INSTALLED ✔", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                ("INSTALLED", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
             } else {
                 ("NOT DETECTED", Style::default().fg(Color::DarkGray))
             };
