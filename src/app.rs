@@ -164,6 +164,9 @@ pub struct AppState {
     pub backend_catalog:    BackendCatalog,
     pub backend_selection:  BackendSelection,
     pub active_backend:     BackendType,
+    pub auto_cascade:               bool,
+    pub cascade_accumulated_keys:   u64,
+    pub cascade_accumulated_secs:   f64,
     pub worker_state:       WorkerState,
     pub cipher_suite:       String,
     pub target_path:        String,
@@ -282,6 +285,9 @@ impl Default for AppState {
             backend_catalog:    BackendCatalog::probe(),
             backend_selection:  BackendSelection::Auto,
             active_backend:     BackendType::Native,
+            auto_cascade:               true,
+            cascade_accumulated_keys:   0,
+            cascade_accumulated_secs:   0.0,
             analysis:           FileAnalysis::default(),
             attack_options:     Vec::new(),
             attack_selected:    0,
@@ -546,6 +552,10 @@ impl AppState {
             self.analysis.ready_to_crack,
         );
         self.active_engine     = active_engine;
+        if self.worker_state != WorkerState::Running {
+            self.cascade_accumulated_keys = 0;
+            self.cascade_accumulated_secs = 0.0;
+        }
         self.worker_state      = WorkerState::Running;
         self.items_done        = 0;
         self.elapsed_secs      = 0.0;
@@ -768,23 +778,48 @@ impl AppState {
                 active_strategy: _,
                 thread_count,
             } => {
-                self.items_done    = items_total;
-                self.elapsed_secs  = elapsed_secs;
+                self.cascade_accumulated_keys += items_total;
+                self.cascade_accumulated_secs += elapsed_secs;
+
+                // If Auto-Cascade is enabled, automatically step to next strategy tier!
+                if self.auto_cascade && self.analysis.ready_to_crack && self.attack_selected + 1 < self.attack_options.len() {
+                    let prev_title = self.attack_options[self.attack_selected].title.clone();
+                    self.attack_selected += 1;
+                    let next_opt = self.attack_options[self.attack_selected].clone();
+
+                    self.add_log(
+                        LogLevel::Warn,
+                        &target_path,
+                        &format!("⚡ Tier '{}' exhausted (0 matches). Auto-cascading to: {}", prev_title, next_opt.title),
+                    );
+
+                    self.launch_attack_from_analysis();
+                    return;
+                }
+
+                self.items_done    = self.cascade_accumulated_keys.max(items_total);
+                self.elapsed_secs  = self.cascade_accumulated_secs.max(elapsed_secs);
                 self.worker_state  = WorkerState::Exhausted;
                 self.speed_mbps    = 0.0;
                 self.thread_active = 0;
                 self.eta_secs      = 0.0;
                 self.found_key     = None;
 
+                self.add_log(
+                    LogLevel::Err,
+                    &target_path,
+                    &format!("❌ ALL ATTACK TIERS EXHAUSTED: Tested {} candidates without finding key.", fmt_num(self.items_done)),
+                );
+
                 let new_ses_id = format!("SES-{}", 1000 + (self.tick % 8999));
                 let new_ses = Session {
                     id:           new_ses_id.clone(),
                     target:       target_path.clone(),
                     cipher:       cipher_suite.clone(),
-                    kdf:          "Exhausted (0 Matches)".into(),
+                    kdf:          "Exhausted (All Tiers)".into(),
                     status:       "EXHAUSTED".into(),
                     created_at:   Utc::now().format("%Y-%m-%d %H:%M").to_string(),
-                    keys_checked: items_total,
+                    keys_checked: self.items_done,
                     speed_mbps:   base_speed,
                     memory_mb:    64,
                     threads:      thread_count,
@@ -965,7 +1000,27 @@ impl AppState {
             }
 
             'w' | 'W' if self.current_tab == Tab::Analyze => {
-                if let Some(entry) = self.dir_entries.get(self.file_selected_idx) {
+                let discovered = crate::engine::crackers::generator::CandidateIterator::discover_wordlists();
+                if !discovered.is_empty() {
+                    let next_wl = if let Some(cur) = &self.custom_wordlist {
+                        let pos = discovered.iter().position(|p| p == cur).unwrap_or(0);
+                        if pos + 1 < discovered.len() {
+                            Some(discovered[pos + 1].clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some(discovered[0].clone())
+                    };
+
+                    self.custom_wordlist = next_wl;
+                    if let Some(p) = &self.custom_wordlist {
+                        let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        self.add_log(LogLevel::Lock, "", &format!("📖 Active Wordlist Cycled: {}", name));
+                    } else {
+                        self.add_log(LogLevel::Info, "", "📖 Wordlist reset to built-in dictionary");
+                    }
+                } else if let Some(entry) = self.dir_entries.get(self.file_selected_idx) {
                     if !entry.is_dir && !entry.is_parent {
                         if self.custom_wordlist.as_ref() == Some(&entry.path) {
                             self.custom_wordlist = None;
@@ -976,6 +1031,15 @@ impl AppState {
                         }
                     }
                 }
+            }
+            't' | 'T' if self.current_tab == Tab::Analyze || self.current_tab == Tab::Dashboard => {
+                self.auto_cascade = !self.auto_cascade;
+                let state_str = if self.auto_cascade {
+                    "ENABLED (Auto-cascade to next tier on 0-match)"
+                } else {
+                    "DISABLED (Single strategy pass only)"
+                };
+                self.add_log(LogLevel::Lock, "", &format!("⚡ Auto-Cascade Succession: {}", state_str));
             }
             'm' | 'M' if self.current_tab == Tab::Analyze => {
                 self.mask_modal_open = true;
@@ -1933,4 +1997,19 @@ fn fmt_num(n: u64) -> String {
         out.push(c);
     }
     out.chars().rev().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_auto_cascade_toggle() {
+        let mut app = AppState::default();
+        assert!(app.auto_cascade, "Auto-cascade should default to enabled");
+        app.on_key_char('t');
+        assert!(!app.auto_cascade, "Pressing 't' should toggle auto-cascade off");
+        app.on_key_char('t');
+        assert!(app.auto_cascade, "Pressing 't' should toggle auto-cascade on");
+    }
 }

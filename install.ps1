@@ -245,6 +245,7 @@ if ($WlChoice -in @("1", "2", "3")) {
 } else {
     Write-Host "[*] Skipped wordlists." -ForegroundColor Gray
 }
+}
 # 7. Final Summary Card
 Write-Host ""
 Write-Host "═════════════════════════════════════════════════════════════════" -ForegroundColor Green

@@ -29,7 +29,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, app: &AppState) {
 
 fn render_left(frame: &mut Frame, area: Rect, app: &AppState) {
     let rows = Layout::vertical([
-        Constraint::Length(13),  // Live Worker Card (with Recovered Key display & Backend Switcher)
+        Constraint::Length(14),  // Live Worker Card (with Recovered Key, Backend & Cascade Switcher)
         Constraint::Length(5),   // Progress Gauge
         Constraint::Length(5),   // Compute Saturation (GPU + CPU Threads)
         Constraint::Min(0),      // Cipher Info & Hardware Acceleration Matrix
@@ -137,6 +137,14 @@ fn render_worker_card(frame: &mut Frame, area: Rect, app: &AppState) {
         Line::from(vec![
             Span::styled("  Execution Mode: ", theme::style_subtext()),
             Span::styled(app.active_engine.display_name(), Style::default().fg(engine_color).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Auto-Cascade  : ", theme::style_subtext()),
+            Span::styled(
+                if app.auto_cascade { "⚡ ON (Auto-advance on failure)" } else { "OFF (Single-tier only)" },
+                if app.auto_cascade { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() },
+            ),
+            Span::styled("  [T: Toggle]", Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(vec![
             Span::styled("  Candidates Done: ", theme::style_subtext()),

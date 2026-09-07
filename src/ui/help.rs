@@ -78,6 +78,7 @@ pub fn render_help_modal(frame: &mut Frame, area: Rect, _app: &AppState) {
         &[
             ("[Space]",  "Pause / Resume active cipher worker pipeline"),
             ("[E]",      "Switch Decryption Backend on the fly (Hashcat/John/Native)"),
+            ("[T]",      "Toggle Auto-Cascade (Waterfall to next wordlist/mask on failure)"),
             ("[C]",      "Cancel active session — abort all worker threads"),
             ("[B]",      "Run multi-threaded cryptographic benchmark suite"),
             ("[/]",      "Activate search filter bar in Sessions view"),

@@ -43,6 +43,8 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
             spans.push(label("Wordlist"));
             spans.push(key("E"));
             spans.push(label("Backend"));
+            spans.push(key("T"));
+            spans.push(label("Cascade"));
             spans.push(key("X"));
             spans.push(label("Export Audit"));
             if app.analysis.ready_to_crack {
@@ -64,6 +66,8 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
             spans.push(label(pause_label));
             spans.push(key("E"));
             spans.push(label("Switch Backend"));
+            spans.push(key("T"));
+            spans.push(label("Cascade"));
             spans.push(key("C"));
             spans.push(label("Cancel"));
             spans.push(key("PgUp/Dn or J/K"));

@@ -182,20 +182,61 @@ impl CandidateIterator {
         }
     }
 
-    /// Returns true if a system wordlist (rockyou etc.) was found at any standard path.
-    pub fn system_wordlist_path() -> Option<&'static str> {
-        const ROCKYOU_PATHS: &[&str] = &[
-            "/home/ultaria/wordlists/rockyou.txt",
-            "/home/ultaria/wordlists/xato-top100k.txt",
-            "/home/ultaria/wordlists/100k-most-used-ncsc.txt",
+    /// Dynamically discovers all wordlists on the host across standard directories.
+    pub fn discover_wordlists() -> Vec<std::path::PathBuf> {
+        let mut dirs = vec![
+            std::path::PathBuf::from("wordlists"),
+            std::path::PathBuf::from("/usr/share/wordlists"),
+            std::path::PathBuf::from("/usr/share/john"),
+            std::path::PathBuf::from("/usr/share/seclists/Passwords/Common-Credentials"),
+            std::path::PathBuf::from("/usr/share/seclists/Passwords/Leaked-Databases"),
+            std::path::PathBuf::from("/opt/wordlists"),
+        ];
+        if let Ok(home) = std::env::var("HOME") {
+            let home_p = std::path::PathBuf::from(home);
+            dirs.push(home_p.join(".local/share/torcrypt/wordlists"));
+            dirs.push(home_p.join("wordlists"));
+        }
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            dirs.push(std::path::PathBuf::from(localappdata).join("Programs/torcrypt/wordlists"));
+        }
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            dirs.push(std::path::PathBuf::from(userprofile).join("wordlists"));
+        }
+
+        let mut found = Vec::new();
+        for dir in dirs {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+                        if name.ends_with(".txt") || name.ends_with(".lst") || name.ends_with(".dict") {
+                            if !found.contains(&path) {
+                                found.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// Returns the first available system wordlist path if any exists.
+    pub fn system_wordlist_path() -> Option<String> {
+        let discovered = Self::discover_wordlists();
+        if let Some(p) = discovered.first() {
+            return Some(p.to_string_lossy().to_string());
+        }
+        const FALLBACKS: &[&str] = &[
             "/usr/share/wordlists/rockyou.txt",
             "/usr/share/john/password.lst",
-            "/usr/share/hashcat/wordlists/rockyou.txt",
             "/opt/wordlists/rockyou.txt",
             "rockyou.txt",
             "wordlist.txt",
         ];
-        ROCKYOU_PATHS.iter().find(|&&p| std::path::Path::new(p).is_file()).copied()
+        FALLBACKS.iter().find(|&&p| std::path::Path::new(p).is_file()).map(|&s| s.to_string())
     }
 
     pub fn total_candidates(&self) -> Option<u64> {

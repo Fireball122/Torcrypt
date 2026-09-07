@@ -509,6 +509,12 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &AppState) {
     spans.push(Span::styled(format!("({}) ", active_label), Style::default().fg(Color::White)));
     spans.push(Span::styled(" │ [E] Switch Backend: ", theme::style_subtext()));
     spans.push(Span::styled(format!("{} ", app.backend_selection.short_name()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+    spans.push(Span::styled(" │ [T] Cascade: ", theme::style_subtext()));
+    spans.push(if app.auto_cascade {
+        Span::styled("ON", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+    } else {
+        Span::styled("OFF", theme::style_dim())
+    });
     if let Some((ses_id, offset)) = checkpoint {
         spans.push(Span::styled(" │ ", theme::style_dim()));
         spans.push(Span::styled(" [R] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)));
