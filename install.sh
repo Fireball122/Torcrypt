@@ -99,14 +99,119 @@ for config_file in "${SHELL_CONFIGS[@]}"; do
     fi
 done
 
+# 6. Interactive Setup Helper
+prompt_user() {
+    local message="$1"
+    local default_val="$2"
+    local reply=""
+    if [ -t 0 ] || [ -e /dev/tty ]; then
+        read -r -p "$message: " reply </dev/tty || reply="$default_val"
+    else
+        reply="$default_val"
+    fi
+    echo "${reply:-$default_val}"
+}
+
+# 7. Interactive External Decryption Backends
+echo ""
+echo -e "${CYAN}  ┌─────────────────────────────────────────────────────────────┐${RESET}"
+echo -e "${CYAN}  │ ⚡ STEP 1: EXTERNAL DECRYPTION GUI ENGINES (OPTIONAL)        │${RESET}"
+echo -e "${CYAN}  └─────────────────────────────────────────────────────────────┘${RESET}"
+echo -e "  TORCRYPT operates as a GUI frontend for high-speed recovery tools:"
+echo -e "    ${BOLD}[1] Hashcat${RESET} (GPU / OpenCL / CUDA Acceleration)"
+echo -e "    ${BOLD}[2] John the Ripper${RESET} (Multi-Core SIMD & Jumbo Containers)"
+echo -e "    ${BOLD}[3] All recommended tools${RESET} (Hashcat, John the Ripper, fcrackzip)"
+echo -e "    ${BOLD}[4] Skip${RESET} (Use built-in pure-Rust AVX2 engine only)"
+echo ""
+
+tool_choice=$(prompt_user "  Select an option [1-4] (Default: 3)" "3")
+
+if [ "${tool_choice}" = "1" ] || [ "${tool_choice}" = "2" ] || [ "${tool_choice}" = "3" ]; then
+    if command -v apt-get >/dev/null 2>&1; then
+        echo -e "${CYAN}[*] Installing selected backends via apt...${RESET}"
+        case "${tool_choice}" in
+            1) sudo apt-get update && sudo apt-get install -y hashcat ;;
+            2) sudo apt-get update && sudo apt-get install -y john ;;
+            3) sudo apt-get update && sudo apt-get install -y hashcat john fcrackzip ;;
+        esac
+    elif command -v pacman >/dev/null 2>&1; then
+        echo -e "${CYAN}[*] Installing selected backends via pacman...${RESET}"
+        case "${tool_choice}" in
+            1) sudo pacman -S --noconfirm hashcat ;;
+            2) sudo pacman -S --noconfirm john ;;
+            3) sudo pacman -S --noconfirm hashcat john fcrackzip ;;
+        esac
+    elif command -v dnf >/dev/null 2>&1; then
+        echo -e "${CYAN}[*] Installing selected backends via dnf...${RESET}"
+        case "${tool_choice}" in
+            1) sudo dnf install -y hashcat ;;
+            2) sudo dnf install -y john ;;
+            3) sudo dnf install -y hashcat john fcrackzip ;;
+        esac
+    elif command -v brew >/dev/null 2>&1; then
+        echo -e "${CYAN}[*] Installing selected backends via Homebrew...${RESET}"
+        case "${tool_choice}" in
+            1) brew install hashcat ;;
+            2) brew install john-jumbo ;;
+            3) brew install hashcat john-jumbo fcrackzip ;;
+        esac
+    else
+        echo -e "${YELLOW}[!] No supported package manager found. Please install Hashcat/John manually.${RESET}"
+    fi
+else
+    echo -e "${CYAN}[*] Skipped external backends.${RESET}"
+fi
+
+# 8. Interactive Wordlists Download
+echo ""
+echo -e "${CYAN}  ┌─────────────────────────────────────────────────────────────┐${RESET}"
+echo -e "${CYAN}  │ 📖 STEP 2: DICTIONARY WORDLISTS                             │${RESET}"
+echo -e "${CYAN}  └─────────────────────────────────────────────────────────────┘${RESET}"
+echo -e "  TORCRYPT includes a 27K built-in corpus. Real-world wordlists"
+echo -e "  enable recovery of millions of complex passwords:"
+echo -e "    ${BOLD}[1] Download RockYou.txt${RESET} (14.3M Passwords - ~134 MB, Industry Standard)"
+echo -e "    ${BOLD}[2] Download SecLists Top-100k${RESET} (~1 MB - Lightweight Quick Starter)"
+echo -e "    ${BOLD}[3] Download Both RockYou & Top-100k${RESET}"
+echo -e "    ${BOLD}[4] Skip wordlists${RESET} (use built-in dictionary or custom wordlists with [W])"
+echo ""
+
+wl_choice=$(prompt_user "  Select an option [1-4] (Default: 1)" "1")
+
+WORDLISTS_DIR="${HOME}/.local/share/torcrypt/wordlists"
+mkdir -p "${WORDLISTS_DIR}"
+
+if [ "${wl_choice}" = "1" ] || [ "${wl_choice}" = "2" ] || [ "${wl_choice}" = "3" ]; then
+    if [ "${wl_choice}" = "1" ] || [ "${wl_choice}" = "3" ]; then
+        ROCKYOU_PATH="${WORDLISTS_DIR}/rockyou.txt"
+        ROCKYOU_URL="https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt"
+        echo -e "${CYAN}[*] Downloading RockYou.txt (14.3M passwords, ~134 MB)...${RESET}"
+        if curl -fSL --progress-bar "${ROCKYOU_URL}" -o "${ROCKYOU_PATH}"; then
+            echo -e "${GREEN}[✔] Saved RockYou wordlist to: ${ROCKYOU_PATH}${RESET}"
+        fi
+    fi
+    if [ "${wl_choice}" = "2" ] || [ "${wl_choice}" = "3" ]; then
+        TOP100K_PATH="${WORDLISTS_DIR}/top-100000.txt"
+        TOP100K_URL="https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10-million-password-list-top-100000.txt"
+        echo -e "${CYAN}[*] Downloading SecLists Top-100k...${RESET}"
+        if curl -fSL --silent "${TOP100K_URL}" -o "${TOP100K_PATH}"; then
+            echo -e "${GREEN}[✔] Saved Top-100k wordlist to: ${TOP100K_PATH}${RESET}"
+        fi
+    fi
+else
+    echo -e "${CYAN}[*] Skipped wordlists.${RESET}"
+fi
+
 echo ""
 echo -e "${GREEN}${BOLD}═════════════════════════════════════════════════════════════════${RESET}"
 echo -e "${GREEN}${BOLD}  ✨ TORCRYPT installation complete!${RESET}"
 echo -e "${GREEN}${BOLD}═════════════════════════════════════════════════════════════════${RESET}"
-echo -e "  Run: ${CYAN}${BOLD}torcrypt${RESET}  (or shorthand: ${BOLD}dt${RESET})"
-echo -e "${YELLOW}  Optional External Acceleration Engines (GPU & Jumbo Containers):${RESET}"
-echo -e "    Debian/Ubuntu: ${BOLD}sudo apt install -y hashcat john fcrackzip${RESET}"
-echo -e "    Arch Linux:    ${BOLD}sudo pacman -S hashcat john fcrackzip${RESET}"
-echo -e "    macOS:         ${BOLD}brew install hashcat john-jumbo fcrackzip${RESET}"
+echo -e "  Executable : ${BOLD}${TARGET_PATH}${RESET}"
+echo -e "  Shortcut   : ${BOLD}torcrypt${RESET}  (or shorthand: ${BOLD}dt${RESET})"
+if [ -d "${WORDLISTS_DIR}" ] && [ "$(ls -A "${WORDLISTS_DIR}" 2>/dev/null)" ]; then
+    echo -e "  Wordlists  : ${CYAN}${WORDLISTS_DIR}${RESET}"
+fi
 echo ""
+echo -e "  Run: ${CYAN}${BOLD}torcrypt${RESET}  (or shorthand: ${BOLD}dt${RESET})"
+echo -e "  In [1 Analyze], press [E] to cycle backends (Auto / Hashcat / John / Native)"
+echo -e "${GREEN}${BOLD}═════════════════════════════════════════════════════════════════${RESET}"
 echo ""
