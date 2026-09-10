@@ -16,6 +16,13 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 fn main() -> io::Result<()> {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        original_hook(panic_info);
+    }));
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -106,6 +113,7 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                                 0 => crate::engine::backends::BackendSelection::Auto,
                                 1 => crate::engine::backends::BackendSelection::Hashcat,
                                 2 => crate::engine::backends::BackendSelection::John,
+                                3 => crate::engine::backends::BackendSelection::Fcrackzip,
                                 _ => crate::engine::backends::BackendSelection::Native,
                             };
                             app.apply_engine_selection(sel);
@@ -157,7 +165,7 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                         }
                         KeyCode::Down => {
                             if app.engine_modal_open {
-                                app.engine_modal_selected = (app.engine_modal_selected + 1).min(3);
+                                app.engine_modal_selected = (app.engine_modal_selected + 1).min(4);
                             } else {
                                 if app.current_tab == Tab::Analyze && !app.dir_entries.is_empty() {
                                     app.file_selected_idx = (app.file_selected_idx + 1).min(app.dir_entries.len().saturating_sub(1));

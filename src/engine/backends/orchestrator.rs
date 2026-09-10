@@ -476,26 +476,42 @@ pub fn parse_hashcat_line(line: &str) -> Option<(f64, u64, u64)> {
 }
 
 pub fn parse_hashcat_cracked(line: &str) -> Option<String> {
-    // Hashcat output on crack: "<hash_or_salt>:<plaintext>"
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.contains('\t') {
+        return None;
+    }
+
     // Exclude header or informational lines containing colon
-    if line.starts_with("Session.")
-        || line.starts_with("Status.")
-        || line.starts_with("Hash.Name")
-        || line.starts_with("Hash.Target")
-        || line.starts_with("Time.Started")
-        || line.starts_with("Time.Estimated")
-        || line.starts_with("Speed.")
-        || line.starts_with("Recovered.")
-        || line.starts_with("Progress.")
-        || line.starts_with("Rejected.")
-        || line.starts_with("Restore.Point")
+    if trimmed.starts_with("Session.")
+        || trimmed.starts_with("Status.")
+        || trimmed.starts_with("Hash.")
+        || trimmed.starts_with("Time.")
+        || trimmed.starts_with("Speed.")
+        || trimmed.starts_with("Recovered.")
+        || trimmed.starts_with("Progress.")
+        || trimmed.starts_with("Rejected.")
+        || trimmed.starts_with("Restore.")
+        || trimmed.starts_with("Candidates.")
+        || trimmed.starts_with("Hardware.")
+        || trimmed.starts_with("HWMon.")
+        || trimmed.starts_with("Watchdog:")
+        || trimmed.starts_with("Device #")
+        || trimmed.starts_with("Started:")
+        || trimmed.starts_with("Stopped:")
+        || trimmed.starts_with("Guess.")
+        || trimmed.starts_with("Dictionary cache")
+        || trimmed.starts_with("INFO:")
+        || trimmed.starts_with("WARN:")
+        || trimmed.starts_with("ERROR:")
+        || trimmed.starts_with("ATTENTION!")
     {
         return None;
     }
 
-    if let Some(idx) = line.rfind(':') {
-        let plaintext = line[idx + 1..].trim();
-        if !plaintext.is_empty() && !line.contains('\t') {
+    if let Some(idx) = trimmed.rfind(':') {
+        let prefix = &trimmed[..idx];
+        let plaintext = trimmed[idx + 1..].trim();
+        if !plaintext.is_empty() && !prefix.starts_with("Device") && !prefix.contains("abort") && !prefix.contains("trigger") {
             return Some(plaintext.to_string());
         }
     }

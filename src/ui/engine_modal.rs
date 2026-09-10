@@ -23,7 +23,7 @@ pub fn render_engine_modal(frame: &mut Frame, area: Rect, app: &mut AppState) {
         .title(Line::from(vec![
             Span::raw(" ─ ◈ "),
             Span::styled("CHOOSE DECRYPTION ENGINE", theme::style_title()),
-            Span::styled("  [Press 1-4 or Enter] ", theme::style_dim()),
+            Span::styled("  [Press 1-5 or Enter] ", theme::style_dim()),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
@@ -62,6 +62,13 @@ pub fn render_engine_modal(frame: &mut Frame, area: Rect, app: &mut AppState) {
         ),
         (
             4,
+            BackendSelection::Fcrackzip,
+            "fcrackzip dedicated optimized ZIP cracking utility",
+            if cat.has_fcrackzip() { "INSTALLED" } else { "NOT DETECTED" }.into(),
+            cat.has_fcrackzip(),
+        ),
+        (
+            5,
             BackendSelection::Native,
             "Built-in pure-Rust AVX2 in-process verification engine",
             "AVAILABLE".into(),

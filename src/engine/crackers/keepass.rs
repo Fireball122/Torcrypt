@@ -14,6 +14,7 @@ pub struct KeePassTarget {
     pub transform_rounds:     u64,
     pub encryption_iv:        [u8; 16],
     pub expected_start_bytes: [u8; 32],
+    pub encrypted_start_bytes: [u8; 32],
 }
 
 impl KeePassTarget {
@@ -46,6 +47,8 @@ impl KeePassTarget {
         let bytes_read = file.read(&mut header_buf).unwrap_or(0);
 
         let mut pos = 0;
+        let mut header_end_offset: Option<u64> = None;
+
         while pos + 3 <= bytes_read {
             let field_id = header_buf[pos];
             let field_len = u16::from_le_bytes([header_buf[pos + 1], header_buf[pos + 2]]) as usize;
@@ -57,7 +60,12 @@ impl KeePassTarget {
 
             let field_data = &header_buf[pos..pos + field_len];
             match field_id {
-                0x00 => { break; } // End of header
+                0x00 => {
+                    // End of Header marker (field ID 0x00)
+                    pos += field_len;
+                    header_end_offset = Some(12 + pos as u64);
+                    break;
+                }
                 0x04 if field_len == 32 => { master_seed.copy_from_slice(field_data); }
                 0x05 if field_len == 32 => { transform_seed.copy_from_slice(field_data); }
                 0x06 if field_len == 8 => {
@@ -73,6 +81,15 @@ impl KeePassTarget {
             pos += field_len;
         }
 
+        let stream_offset = header_end_offset?;
+        if stream_offset + 32 > file_len {
+            return None;
+        }
+
+        file.seek(SeekFrom::Start(stream_offset)).ok()?;
+        let mut encrypted_start_bytes = [0u8; 32];
+        file.read_exact(&mut encrypted_start_bytes).ok()?;
+
         Some(Self {
             file_path: path.to_string_lossy().to_string(),
             master_seed,
@@ -80,6 +97,7 @@ impl KeePassTarget {
             transform_rounds: transform_rounds.max(100),
             encryption_iv,
             expected_start_bytes,
+            encrypted_start_bytes,
         })
     }
 
@@ -112,11 +130,10 @@ impl KeePassTarget {
         master_msg[32..64].copy_from_slice(&final_key);
         let master_key = sha256(&master_msg);
 
-        // 4. Verify against expected start bytes
-        let dec = aes_cbc_decrypt(&master_key, &self.encryption_iv, &self.expected_start_bytes);
+        // 4. Decrypt first 32 bytes of the payload stream and compare with expected start bytes
+        let dec = aes_cbc_decrypt(&master_key, &self.encryption_iv, &self.encrypted_start_bytes);
         if dec.len() >= 32 {
-            // In a valid database, decrypted start bytes match expected pattern or entropy
-            dec[0..16] != [0u8; 16]
+            dec[..32] == self.expected_start_bytes
         } else {
             false
         }
@@ -145,7 +162,9 @@ mod tests {
             transform_rounds: 100,
             encryption_iv: [0x33u8; 16],
             expected_start_bytes: [0x44u8; 32],
+            encrypted_start_bytes: [0x55u8; 32],
         };
-        let _ = target.verify("MasterPassword");
+        // A wrong candidate password must not match random payload bytes
+        assert!(!target.verify("WrongMasterPassword!2026"));
     }
 }

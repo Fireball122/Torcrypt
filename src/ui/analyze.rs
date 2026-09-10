@@ -471,9 +471,9 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &mut AppState) {
     for (i, opt) in app.attack_options.iter().enumerate() {
         let is_active = i == app.attack_selected;
         let pill = if is_active {
-            Span::styled(format!(" ▶ [{}] ", i + 1), Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
+            Span::styled(format!(" ▶ Tier {} ", i + 1), Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
         } else {
-            Span::styled(format!("   [{}] ", i + 1), Style::default().fg(Color::DarkGray).bg(Color::Indexed(237)))
+            Span::styled(format!("   Tier {} ", i + 1), Style::default().fg(Color::DarkGray).bg(Color::Indexed(237)))
         };
         let rec_badge = if opt.is_auto_recommended {
             Span::styled(" [AUTO-RECOMMENDED]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))

@@ -1127,14 +1127,16 @@ impl AppState {
                 '1' => { self.apply_engine_selection(BackendSelection::Auto);      self.engine_modal_open = false; }
                 '2' => { self.apply_engine_selection(BackendSelection::Hashcat);   self.engine_modal_open = false; }
                 '3' => { self.apply_engine_selection(BackendSelection::John);      self.engine_modal_open = false; }
-                '4' => { self.apply_engine_selection(BackendSelection::Native);    self.engine_modal_open = false; }
-                'j' | 'J' => { self.engine_modal_selected = (self.engine_modal_selected + 1).min(3); }
+                '4' => { self.apply_engine_selection(BackendSelection::Fcrackzip);  self.engine_modal_open = false; }
+                '5' => { self.apply_engine_selection(BackendSelection::Native);    self.engine_modal_open = false; }
+                'j' | 'J' => { self.engine_modal_selected = (self.engine_modal_selected + 1).min(4); }
                 'k' | 'K' => { self.engine_modal_selected = self.engine_modal_selected.saturating_sub(1); }
                 '\r' | '\n' => {
                     let sel = match self.engine_modal_selected {
                         0 => BackendSelection::Auto,
                         1 => BackendSelection::Hashcat,
                         2 => BackendSelection::John,
+                        3 => BackendSelection::Fcrackzip,
                         _ => BackendSelection::Native,
                     };
                     self.apply_engine_selection(sel);
@@ -1154,25 +1156,6 @@ impl AppState {
         }
 
         match c {
-            '1' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack && !self.attack_options.is_empty() => {
-                self.attack_selected = 0;
-            }
-            '2' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack && self.attack_options.len() > 1 => {
-                self.attack_selected = 1;
-            }
-            '3' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack && self.attack_options.len() > 2 => {
-                self.attack_selected = 2;
-            }
-            '4' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack && self.attack_options.len() > 3 => {
-                self.attack_selected = 3;
-            }
-            '5' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack && self.attack_options.len() > 4 => {
-                self.attack_selected = 4;
-            }
-            '6' if self.current_tab == Tab::Analyze && self.analysis.ready_to_crack && self.attack_options.len() > 5 => {
-                self.attack_selected = 5;
-            }
-
             '1' => self.current_tab = Tab::Analyze,
             '2' => self.current_tab = Tab::Dashboard,
             '3' => self.current_tab = Tab::Benchmark,
@@ -1250,8 +1233,8 @@ impl AppState {
                     BackendSelection::Auto      => 0,
                     BackendSelection::Hashcat   => 1,
                     BackendSelection::John       => 2,
-                    BackendSelection::Fcrackzip  => 2, // map to John slot (row 2)
-                    BackendSelection::Native    => 3,
+                    BackendSelection::Fcrackzip  => 3,
+                    BackendSelection::Native    => 4,
                 };
                 self.engine_modal_open = true;
             }

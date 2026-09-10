@@ -62,6 +62,7 @@ impl Rar5Target {
             pos += 4;
 
             let hdr_size = read_vint(buf, &mut pos)? as usize;
+            let type_start_pos = pos;
             let hdr_type = read_vint(buf, &mut pos)?;
             let _flags   = read_vint(buf, &mut pos)?;
 
@@ -99,16 +100,15 @@ impl Rar5Target {
                 });
             }
 
-            // Not the encryption header — skip to next block.
-            // hdr_size covers from the type byte onward; we've already consumed type + flags (2 vints).
-            // Just jump past using the reported header size from start-of-block.
-            // Re-anchor: go back to just after the CRC32 and skip hdr_size bytes.
-            // We already moved pos forward by the two vints; find the next block by aligning.
-            // The safest approach: jump to (block_start + 4 + hdr_size) where block_start was pos-4 before CRC skip.
-            // Since we've already advanced pos, just break if hdr_size is 0 to avoid looping forever.
+            // Not the encryption header — advance to next block.
+            // In RAR5, header_size defines the size starting from the header type field.
             if hdr_size == 0 { break; }
-            // Clamp to avoid reading past buffer
-            if pos > buf.len() { break; }
+            let next_pos = match type_start_pos.checked_add(hdr_size) {
+                Some(p) => p,
+                None => break,
+            };
+            if next_pos <= pos || next_pos > buf.len() { break; }
+            pos = next_pos;
         }
 
         None

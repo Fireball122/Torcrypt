@@ -237,10 +237,17 @@ impl DecryptionWorker {
             };
 
             if let Some(bin) = bin_path {
-                let mut gen = CandidateIterator::new_common();
-                let cand_sample = if req.wordlist_path.is_some() { None } else { Some(gen.next_batch(500)) };
+                let sys_wl_str = crate::engine::crackers::generator::CandidateIterator::system_wordlist_path();
+                let sys_wl_path = sys_wl_str.as_deref().map(Path::new);
+                let custom_wl_path = req.wordlist_path.as_deref().map(Path::new);
+                let wl_arg = custom_wl_path.or(sys_wl_path);
+                let cand_sample = if wl_arg.is_some() {
+                    None
+                } else {
+                    let mut gen = CandidateIterator::new_common();
+                    Some(gen.next_batch(10_000))
+                };
                 let extractor_bin = self.backend_catalog.find_extractor_for(target_p);
-                let wl_arg = req.wordlist_path.as_deref().map(Path::new);
 
                 match BackendJob::launch(
                     effective_backend,
