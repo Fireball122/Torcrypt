@@ -45,21 +45,51 @@ impl SevenZipTarget {
         let actual_pos = 32 + next_header_offset;
         file.seek(SeekFrom::Start(actual_pos)).ok()?;
 
-        let sample_len = (next_header_size.min(64)) as usize;
-        let mut sample_buf = vec![0u8; sample_len];
-        file.read_exact(&mut sample_buf).ok()?;
+        let hdr_buf_len = (next_header_size.min(4096)) as usize;
+        let mut hdr_buf = vec![0u8; hdr_buf_len];
+        file.read_exact(&mut hdr_buf).ok()?;
 
-        let mut salt = vec![0u8; 16];
-        let mut iv = [0u8; 16];
+        // Parse 7zAES coder properties
+        let mut num_cycles_power = 19u8;
+        let mut salt: Vec<u8> = vec![0u8; 16];
+        let mut iv: [u8; 16] = [0u8; 16];
 
-        if sample_buf.len() >= 32 {
-            salt.copy_from_slice(&sample_buf[0..16]);
-            iv.copy_from_slice(&sample_buf[16..32]);
+        if let Some(pos) = crate::engine::extractors::hash_formatter::find_subslice(&hdr_buf, &[0x06, 0xF1, 0x07, 0x01]) {
+            let mut p = pos + 4;
+            let _ = crate::engine::extractors::hash_formatter::read_7z_vint(&hdr_buf, &mut p);
+            if p < hdr_buf.len() {
+                let b0 = hdr_buf[p]; p += 1;
+                num_cycles_power = b0 & 0x3F;
+                let has_iv = (b0 & 0x40) != 0;
+                let has_salt = (b0 & 0x80) != 0;
+
+                if (has_iv || has_salt) && p < hdr_buf.len() {
+                    let b1 = hdr_buf[p]; p += 1;
+                    let salt_size = if has_salt { (((b1 >> 4) & 0x0F) + 1) as usize } else { 0 };
+                    let iv_size = if has_iv { ((b1 & 0x0F) + 1) as usize } else { 0 };
+
+                    if p + salt_size <= hdr_buf.len() {
+                        salt = hdr_buf[p..p + salt_size].to_vec();
+                        p += salt_size;
+                    }
+                    if p + iv_size <= hdr_buf.len() {
+                        let iv_slice = &hdr_buf[p..p + iv_size.min(16)];
+                        iv[..iv_slice.len()].copy_from_slice(iv_slice);
+                    }
+                }
+            }
         }
+
+        // Ciphertext stream starts at offset 32 for header-encrypted archives
+        file.seek(SeekFrom::Start(32)).ok()?;
+        let sample_len = (next_header_offset.min(64)) as usize;
+        let mut sample_buf = vec![0u8; sample_len.max(16)];
+        let bytes_read = file.read(&mut sample_buf).unwrap_or(0);
+        sample_buf.truncate(bytes_read);
 
         Some(Self {
             file_path: path.to_string_lossy().to_string(),
-            num_cycles_power: 19, // 7z standard default: 2^19 = 524,288 cycles
+            num_cycles_power,
             salt,
             iv,
             encrypted_sample: sample_buf,

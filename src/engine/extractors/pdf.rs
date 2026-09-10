@@ -77,9 +77,13 @@ impl PdfInspection {
             });
         }
 
-        // Parse encryption parameters from the context surrounding /Encrypt
+        // Parse encryption parameters from the context surrounding /Encrypt (resolving indirect objects if needed)
         let enc_idx = found_encrypt.unwrap();
-        let enc_slice = &context_buf[enc_idx..];
+        let enc_dict = crate::engine::extractors::hash_formatter::resolve_pdf_encryption_dict(&mut file, file_len, &context_buf);
+        let enc_slice = match &enc_dict {
+            Some(d) => &d[..],
+            None => &context_buf[enc_idx..],
+        };
 
         let v_val = extract_int_param(enc_slice, b"/V").unwrap_or(1) as u8;
         let r_val = extract_int_param(enc_slice, b"/R").unwrap_or(2) as u8;

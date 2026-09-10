@@ -3,7 +3,7 @@
 
 use crate::engine::crypto::{md5, rc4_crypt};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 pub const PDF_PADDING: [u8; 32] = [
@@ -27,28 +27,50 @@ pub struct PdfTarget {
 impl PdfTarget {
     pub fn load_from_file(path: &Path) -> Option<Self> {
         let mut file = File::open(path).ok()?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf).ok()?;
-
-        if !buf.starts_with(b"%PDF-") {
+        let file_len = file.metadata().ok()?.len();
+        if file_len < 32 {
             return None;
         }
 
-        // Search for /Encrypt dictionary
-        let enc_idx = find_subslice(&buf, b"/Encrypt")?;
-        let search_area = &buf[enc_idx..buf.len().min(enc_idx + 4096)];
+        let mut header = [0u8; 16];
+        file.read_exact(&mut header).ok()?;
+        if !header.starts_with(b"%PDF-") {
+            return None;
+        }
 
-        let rev = extract_int(search_area, b"/R").unwrap_or(2) as u8;
-        let length = extract_int(search_area, b"/Length").unwrap_or(40) as usize;
+        let scan_size = (file_len.min(65536)) as usize;
+        let mut scan_buf = vec![0u8; scan_size];
+        file.seek(SeekFrom::Start(file_len - scan_size as u64)).ok()?;
+        file.read_exact(&mut scan_buf).ok()?;
+
+        let mut context_buf = scan_buf;
+        let mut enc_pos = find_subslice(&context_buf, b"/Encrypt");
+        if enc_pos.is_none() && file_len > scan_size as u64 {
+            let head_size = (file_len.min(65536)) as usize;
+            let mut head_buf = vec![0u8; head_size];
+            file.seek(SeekFrom::Start(0)).ok()?;
+            if file.read_exact(&mut head_buf).is_ok() {
+                enc_pos = find_subslice(&head_buf, b"/Encrypt");
+                if enc_pos.is_some() {
+                    context_buf = head_buf;
+                }
+            }
+        }
+
+        let _ = enc_pos?;
+        let enc_dict = crate::engine::extractors::hash_formatter::resolve_pdf_encryption_dict(&mut file, file_len, &context_buf)?;
+        let enc_slice = &enc_dict[..];
+
+        let rev = extract_int(enc_slice, b"/R").unwrap_or(2) as u8;
+        let length = extract_int(enc_slice, b"/Length").unwrap_or(if rev == 2 { 40 } else { 128 }) as usize;
         let key_bytes = (length / 8).clamp(5, 16);
-        let p_perm = extract_int(search_area, b"/P").unwrap_or(-64) as i32;
+        let p_perm = extract_int(enc_slice, b"/P").unwrap_or(-64) as i32;
 
-        let o_value = extract_bytes(search_area, b"/O").unwrap_or_else(|| vec![0u8; 32]);
-        let u_value = extract_bytes(search_area, b"/U").unwrap_or_else(|| vec![0u8; 32]);
+        let o_value = extract_bytes(enc_slice, b"/O").unwrap_or_else(|| vec![0u8; 32]);
+        let u_value = extract_bytes(enc_slice, b"/U").unwrap_or_else(|| vec![0u8; 32]);
 
         // Find /ID array
-        let id_area = &buf[buf.len().saturating_sub(4096)..];
-        let id_first = extract_first_id(id_area).unwrap_or_default();
+        let id_first = extract_first_id(&context_buf).unwrap_or_default();
 
         Some(Self {
             file_path: path.to_string_lossy().to_string(),
@@ -121,9 +143,9 @@ impl PdfTarget {
     }
 
     pub fn test_batch(&self, candidates: &[String]) -> Option<String> {
-        for candidate in candidates {
-            if self.verify(candidate) {
-                return Some(candidate.clone());
+        for cand in candidates {
+            if self.verify(cand) {
+                return Some(cand.clone());
             }
         }
         None
@@ -165,7 +187,6 @@ fn extract_bytes(buf: &[u8], key: &[u8]) -> Option<Vec<u8>> {
         i += 1;
     }
     if i < buf.len() && buf[i] == b'<' {
-        // Hex string <...>
         let start = i + 1;
         let end = find_subslice(&buf[start..], b">")? + start;
         let hex_str = std::str::from_utf8(&buf[start..end]).ok()?.replace(' ', "");
@@ -180,7 +201,6 @@ fn extract_bytes(buf: &[u8], key: &[u8]) -> Option<Vec<u8>> {
         }
         Some(bytes)
     } else if i < buf.len() && buf[i] == b'(' {
-        // Literal string (...)
         let start = i + 1;
         let end = find_subslice(&buf[start..], b")")? + start;
         Some(buf[start..end].to_vec())
@@ -201,9 +221,23 @@ mod tests {
 
     #[test]
     fn test_pdf_key_derivation_and_auth() {
-        // Test standard PDF padding
         assert_eq!(PDF_PADDING.len(), 32);
         assert_eq!(PDF_PADDING[0], 0x28);
         assert_eq!(PDF_PADDING[31], 0x7A);
+    }
+
+    #[test]
+    fn test_pdf_target_load_indirect() {
+        let temp_path = std::env::temp_dir().join("torcrypt_load_indirect.pdf");
+        let pdf_data = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n2 0 obj\n<< /Filter /Standard /V 2 /R 3 /Length 128 /P -4 /O <0000000000000000000000000000000000000000000000000000000000000000> /U <6879919b1afd520bd3b7dbcc0868a0a500000000000000000000000000000000> >>\nendobj\ntrailer\n<< /Size 3 /Root 1 0 R /Encrypt 2 0 R /ID [ <62888255846156252261477183186121> <62888255846156252261477183186121> ] >>\n%%EOF";
+        std::fs::write(&temp_path, pdf_data).unwrap();
+
+        let target = PdfTarget::load_from_file(&temp_path).expect("Should load indirect PDF");
+        assert_eq!(target.revision, 3);
+        assert_eq!(target.key_bytes, 16);
+        assert_eq!(target.p_perm, -4);
+        assert_eq!(target.u_value.len(), 32);
+        assert_eq!(target.o_value.len(), 32);
+        let _ = std::fs::remove_file(temp_path);
     }
 }
