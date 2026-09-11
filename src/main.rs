@@ -7,7 +7,7 @@ mod ui;
 use std::io;
 use std::time::{Duration, Instant};
 
-use app::{AppState, Tab};
+use app::{AppState, Tab, WorkerState};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
     execute,
@@ -47,14 +47,20 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
     let mut app       = AppState::default();
     let tick_rate     = Duration::from_millis(33); // 30 FPS
     let mut last_tick = Instant::now();
+    let mut dirty     = true;
 
     loop {
         // Drain all pending telemetry events from the background decryption worker
         while let Ok(event) = app.engine.try_recv() {
             app.handle_telemetry(event);
+            dirty = true;
         }
 
-        term.draw(|frame| ui::render(frame, &mut app))?;
+        if dirty {
+            term.draw(|frame| ui::render(frame, &mut app))?;
+            dirty = false;
+        }
+
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)? {
             match event::read()? {
@@ -62,6 +68,7 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
+                    dirty = true;
 
                     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                         return Ok(());
@@ -188,8 +195,11 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                         _ => {}
                     }
                 }
-                Event::Resize(_, _) => { /* ratatui automatically reflows layout */ }
+                Event::Resize(_, _) => {
+                    dirty = true;
+                }
                 Event::Mouse(mouse) => {
+                    dirty = true;
                     match mouse.kind {
                         MouseEventKind::Down(_) => {
                             app.handle_click(mouse.column, mouse.row);
@@ -209,6 +219,12 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
 
         if last_tick.elapsed() >= tick_rate {
             app.on_tick();
+            if app.worker_state == WorkerState::Running || app.bench_running || app.in_splash {
+                dirty = true;
+            }
+            if app.tick % 30 == 0 {
+                dirty = true; // Live clock and host telemetry refresh
+            }
             last_tick = Instant::now();
         }
     }

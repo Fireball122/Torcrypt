@@ -13,7 +13,7 @@ use crate::engine::session_db::{DbSession, SessionDatabase};
 use crate::engine::system_info::SystemMonitor;
 use crate::engine::feasibility::estimate_feasibility;
 use crate::engine::wordlist_profiler::WordlistProfile;
-use crate::engine::{benchmark_stage, default_benchmarks, BenchResult, PotfileRecord};
+use crate::engine::{default_benchmarks, BenchResult, PotfileRecord};
 use crate::engine::backends::{BackendCatalog, BackendSelection, BackendType};
 // ─── Tab Routing (5 Tabs) ─────────────────────────────────────────────────────
 
@@ -225,6 +225,7 @@ pub struct AppState {
     pub bench_selected:     usize,
     pub bench_running:      bool,
     pub bench_progress:     u8, // 0–100
+    pub bench_rx:           Option<crossbeam_channel::Receiver<(usize, BenchResult, u8)>>,
 
     // System Hardware Info (Probed dynamically)
     pub sys_os:             String,
@@ -351,6 +352,7 @@ impl Default for AppState {
             bench_selected:     0,
             bench_running:      false,
             bench_progress:     0,
+            bench_rx:           None,
             sys_os:             hw.os_name,
             sys_kernel:         hw.kernel_ver,
             sys_arch:           hw.arch_name,
@@ -1059,6 +1061,28 @@ impl AppState {
         }
     }
 
+        pub fn trigger_benchmark(&mut self) {
+        if self.bench_running {
+            return;
+        }
+        self.bench_running = true;
+        self.bench_progress = 0;
+        let (tx, rx) = crossbeam_channel::unbounded();
+        self.bench_rx = Some(rx);
+        let threads = self.thread_count;
+
+        std::thread::spawn(move || {
+            for stage in 0..9 {
+                let res = crate::engine::benchmark_stage(stage, threads);
+                let pct = (((stage + 1) * 100) / 9).min(100) as u8;
+                if tx.send((stage, res, pct)).is_err() {
+                    break;
+                }
+            }
+        });
+        self.add_log(LogLevel::Info, "", "Background cryptographic benchmark suite running (non-blocking)...");
+    }
+
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
 
@@ -1081,21 +1105,34 @@ impl AppState {
             self.push_throughput(0);
         }
 
-        if self.bench_running {
-            let stage = ((self.bench_progress as usize + 1) * 9) / 100;
-            if stage < 9 {
-                let res = benchmark_stage(stage, self.thread_count);
-                if stage < self.bench_results.len() {
-                    self.bench_results[stage] = res;
-                } else {
-                    self.bench_results.push(res);
-                }
-                self.bench_progress = (((stage + 1) * 100) / 9).min(100) as u8;
+        let updates: Vec<(usize, BenchResult, u8)> = if let Some(rx) = &self.bench_rx {
+            rx.try_iter().collect()
+        } else {
+            Vec::new()
+        };
+
+        for (stage, res, pct) in updates {
+            if stage < self.bench_results.len() {
+                self.bench_results[stage] = res;
+            } else {
+                self.bench_results.push(res);
             }
-            if self.bench_progress >= 100 {
+            self.bench_progress = pct;
+            if pct >= 100 {
                 self.bench_running = false;
                 self.add_log(LogLevel::Lock, "", "Hardware benchmark complete: Real cryptographic throughput profiled.");
             }
+        }
+        if !self.bench_running {
+            self.bench_rx = None;
+        }
+
+        // Live host CPU and memory telemetry sampling every ~1 second (30 ticks)
+        if self.tick % 30 == 0 {
+            self.cpu_usage_pct = self.sys_monitor.sample_cpu();
+            let (ram_used, ram_total) = SystemMonitor::sample_memory();
+            self.ram_used_gb = ram_used;
+            self.ram_total_gb = ram_total;
         }
     }
 
@@ -1283,11 +1320,7 @@ impl AppState {
                 }
             }
             'b' | 'B' => {
-                if !self.bench_running {
-                    self.bench_running  = true;
-                    self.bench_progress = 0;
-                    self.add_log(LogLevel::Info, "", "Executing multi-device throughput benchmark suite (GPU + CPU)...");
-                }
+                self.trigger_benchmark();
             }
             '/' => {
                 if self.current_tab == Tab::Sessions {
