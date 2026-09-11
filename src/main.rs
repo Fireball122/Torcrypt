@@ -126,6 +126,10 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                                 app.log_scroll_offset = 0; // Snap to bottom live stream
                             }
                         }
+                        KeyCode::Enter if app.mask_modal_open => {
+                            app.launch_custom_mask_attack();
+                            app.mask_modal_open = false;
+                        }
                         KeyCode::Enter if app.engine_modal_open => {
                             let sel = match app.engine_modal_selected {
                                 0 => crate::engine::backends::BackendSelection::Auto,
@@ -150,6 +154,9 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                                     app.launch_attack_from_analysis();
                                 }
                             }
+                        }
+                        KeyCode::Backspace if app.mask_modal_open => {
+                            app.mask_input.pop();
                         }
                         KeyCode::Backspace if app.search_mode => {
                             app.search_query.pop();

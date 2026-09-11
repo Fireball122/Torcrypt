@@ -636,16 +636,8 @@ fn render_mask_modal(frame: &mut Frame, area: Rect, app: &AppState) {
     let mask = crate::engine::crackers::generator::CompiledMask::parse(&app.mask_input);
     let keyspace_str = fmt_number(mask.total);
 
-    let est_time_secs = (mask.total as f64) / (if app.sys_gpu_available { 40_000.0 } else { 4_000.0 });
-    let est_time_str = if est_time_secs < 1.0 {
-        "< 1 second".to_string()
-    } else if est_time_secs < 60.0 {
-        format!("{:.1} seconds", est_time_secs)
-    } else if est_time_secs < 3600.0 {
-        format!("{:.1} minutes", est_time_secs / 60.0)
-    } else {
-        format!("{:.1} hours", est_time_secs / 3600.0)
-    };
+    let feas = crate::engine::feasibility::estimate_feasibility(mask.total, &app.analysis.lock_type, app.sys_gpu_available);
+    let est_time_str = feas.human_duration;
 
     let block = Block::default()
         .title(Line::from(vec![

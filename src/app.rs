@@ -1965,7 +1965,12 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
                 ready_to_crack: true,
             };
         } else if has_eapol {
-            let rec_att = "Convert with hcxpcapngtool -o out.22000 <file>, then: hashcat -m 22000 out.22000 wordlist";
+            let is_direct_hc = is_hccapx || filename.ends_with(".22000");
+            let rec_att = if is_direct_hc {
+                "Converted Hash Ready: Launch GPU Hashcat Mode 22000 Recovery".into()
+            } else {
+                "Convert capture via hcxpcapngtool -o out.22000 <file>, then load .22000 in Torcrypt".into()
+            };
 
             return FileAnalysis {
                 file_path: path.to_string_lossy().to_string(),
@@ -1975,9 +1980,9 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
                 lock_type: "EAPOL 4-Way Handshake Captured".into(),
                 entropy,
                 magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else if is_hccapx { "HCPX (Hashcat 22000)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
-                recommended_attack: rec_att.into(),
+                recommended_attack: rec_att,
                 recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
-                ready_to_crack: true,
+                ready_to_crack: is_direct_hc,
             };
         } else {
             return FileAnalysis {

@@ -59,19 +59,23 @@ impl CrackPool {
 
     /// Distribute `candidates` across all threads and return the first cracked key,
     /// or None if the entire batch was exhausted.
-    pub fn evaluate(&self, candidates: Vec<String>) -> Option<String> {
+    pub fn evaluate(&self, mut candidates: Vec<String>) -> Option<String> {
         if candidates.is_empty() {
             return None;
         }
         self.found_flag.store(false, Ordering::Relaxed);
 
         let chunk_size = ((candidates.len() + self.size - 1) / self.size).max(1);
-        let chunks: Vec<&[String]> = candidates.chunks(chunk_size).collect();
+        let mut chunks = Vec::with_capacity(self.size);
+        while !candidates.is_empty() {
+            let split_at = candidates.len().saturating_sub(chunk_size);
+            let chunk = candidates.split_off(split_at);
+            chunks.push(chunk);
+        }
         let sent = chunks.len();
 
         for chunk in chunks {
-            // Cloning is unavoidable here: each thread needs its own data.
-            let _ = self.work_tx.send(Some(chunk.to_vec()));
+            let _ = self.work_tx.send(Some(chunk));
         }
 
         let mut result = None;
