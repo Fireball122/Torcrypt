@@ -568,6 +568,38 @@ impl BackendCatalog {
     }
 }
 
+/// Return the John the Ripper `--format=<fmt>` string for a given cipher description.
+pub fn john_format_for(cipher_desc: &str) -> Option<&'static str> {
+    let d = cipher_desc.to_ascii_lowercase();
+    if d.contains("zipcrypto") || d.contains("pkware") {
+        Some("PKZIP")
+    } else if d.contains("winzip") || (d.contains("aes") && d.contains("zip")) {
+        Some("zip")
+    } else if d.contains("pdf") {
+        Some("pdf")
+    } else if d.contains("7z") || d.contains("7-zip") {
+        Some("7z")
+    } else if d.contains("rar5") {
+        Some("rar5")
+    } else if d.contains("rar") {
+        Some("rar")
+    } else if d.contains("keepass") || d.contains("kdbx") {
+        Some("keepass")
+    } else if d.contains("ntlm") || d.contains("sam") {
+        Some("NT")
+    } else if d.contains("md5") && !d.contains("hmac") && !d.contains("pbkdf") {
+        Some("raw-md5")
+    } else if d.contains("sha-1") && !d.contains("pbkdf") && !d.contains("hmac") {
+        Some("raw-sha1")
+    } else if d.contains("sha-256") && !d.contains("pbkdf") && !d.contains("hmac") {
+        Some("raw-sha256")
+    } else if d.contains("wpa") || d.contains("pmkid") || d.contains("eapol") {
+        Some("wpapsk")
+    } else {
+        None
+    }
+}
+
 /// Return the Hashcat -m mode integer for a given container cipher string.
 /// The `cipher_desc` is the `lock_type` string produced by analyze_file_magic.
 /// Returns None when no Hashcat mode applies (native-only or unsupported).

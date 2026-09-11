@@ -574,10 +574,31 @@ impl DecryptionWorker {
                     }
                     BackendStatus::Failed(err) => {
                         let _ = self.tel_tx.send(TelemetryEvent::Log {
-                            level:   LogLevel::Err,
+                            level:   LogLevel::Warn,
                             path:    self.target_path.clone(),
-                            message: format!("External backend failed: {}", err),
+                            message: format!("External backend failed: {} — auto-falling over to Native engine...", err),
                         });
+                        self.active_backend = None;
+                        let target_p = Path::new(&self.target_path);
+                        if let Some(cracker) = ActiveCracker::load_target(target_p) {
+                            let req = AttackRequest {
+                                target_path:     self.target_path.clone(),
+                                cipher_suite:    self.cipher_suite.clone(),
+                                active_engine:   ComputeEngine::CpuSimd,
+                                strategy_id:     self.active_strategy.clone(),
+                                strategy_title:  self.active_strategy.clone(),
+                                keyspace_name:   "Failover Candidates".into(),
+                                items_total:     self.items_total,
+                                speed_base:      if self.base_speed > 0.0 { self.base_speed } else { 10_000.0 },
+                                thread_count:    self.thread_count,
+                                wordlist_path:   None,
+                                start_offset:    self.items_done,
+                                cipher_desc:     Some(self.cipher_suite.clone()),
+                                backend_selection: crate::engine::backends::BackendSelection::Native,
+                            };
+                            self.engage_native_cracker(cracker, &req);
+                            return;
+                        }
                         got_exhausted = true;
                         break;
                     }

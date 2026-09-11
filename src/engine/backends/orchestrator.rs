@@ -83,12 +83,29 @@ impl BackendJob {
 
         let mut resolved_mode: Option<u32> = None;
 
+        let pot_path = if let Ok(home) = std::env::var("HOME") {
+            let p = std::path::PathBuf::from(home).join(".local/share/torcrypt/hashcat.potfile");
+            if let Some(parent) = p.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            Some(p)
+        } else {
+            None
+        };
+
         match backend_type {
             BackendType::Hashcat => {
-                // Configure Hashcat arguments
+                // Configure Hashcat arguments for zero-config high throughput
                 cmd.arg("--status")
                     .arg("--status-timer=1")
-                    .arg("--machine-readable");
+                    .arg("--machine-readable")
+                    .arg("-w").arg("3")
+                    .arg("-O")
+                    .arg("--self-test-disable");
+
+                if let Some(ref pot) = pot_path {
+                    cmd.arg("--potfile-path").arg(pot);
+                }
 
                 if let Some(desc) = cipher_desc {
                     if let Some(mode) = super::detector::hashcat_mode_for(desc) {
@@ -104,9 +121,17 @@ impl BackendJob {
                     cmd.arg(w);
                     if let Some(strat) = strategy_id {
                         if strat.contains("rules") || strat.contains("best64") {
-                            let rule_path = Path::new("/usr/share/hashcat/rules/best64.rule");
-                            if rule_path.is_file() {
-                                cmd.arg("-r").arg(rule_path);
+                            const RULE_PATHS: &[&str] = &[
+                                "/usr/share/hashcat/rules/best64.rule",
+                                "/usr/local/share/hashcat/rules/best64.rule",
+                                "/opt/hashcat/rules/best64.rule",
+                                "rules/best64.rule",
+                            ];
+                            for rp in RULE_PATHS {
+                                if Path::new(rp).is_file() {
+                                    cmd.arg("-r").arg(rp);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -138,7 +163,13 @@ impl BackendJob {
                 }
             }
             BackendType::John => {
-                // Configure John the Ripper arguments
+                // Configure John the Ripper format flag automatically
+                if let Some(desc) = cipher_desc {
+                    if let Some(fmt) = super::detector::john_format_for(desc) {
+                        cmd.arg(format!("--format={}", fmt));
+                    }
+                }
+
                 if let Some(w) = wordlist {
                     cmd.arg(format!("--wordlist={}", w.display()));
                     if let Some(strat) = strategy_id {
@@ -312,6 +343,12 @@ impl BackendJob {
                         let mut check_cmd = Command::new(&backend_bin_path);
                         if let Some(m) = resolved_mode {
                             check_cmd.arg("-m").arg(m.to_string());
+                        }
+                        if let Ok(home) = std::env::var("HOME") {
+                            let pot = std::path::PathBuf::from(home).join(".local/share/torcrypt/hashcat.potfile");
+                            if pot.is_file() {
+                                check_cmd.arg("--potfile-path").arg(pot);
+                            }
                         }
                         check_cmd.arg("--show").arg(&actual_target_clone);
                         if let Ok(out) = check_cmd.output() {
