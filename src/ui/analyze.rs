@@ -167,15 +167,13 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
 
 fn render_smart_inspector(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let rows = Layout::vertical([
-        Constraint::Length(8), // Container Inspection Report
-        Constraint::Length(7), // Decryption Engines & Auto-Recommender Card
-        Constraint::Min(0),    // Attack Recommender & Execution Launcher
+        Constraint::Length(10), // Container & Engine Inspection Deck
+        Constraint::Min(0),     // Attack Strategy Recommender & Execution Launcher
     ])
     .split(area);
 
     render_inspection_report(frame, rows[0], app);
-    render_engine_selector_card(frame, rows[1], app);
-    render_attack_launcher(frame, rows[2], app);
+    render_attack_launcher(frame, rows[1], app);
 }
 
 fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
@@ -210,6 +208,25 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
         ComputeEngine::PcapInspect => ("PCAP PROTOCOL CREDENTIAL EXTRACTOR".into(), Color::Cyan),
     };
 
+    let resolved = if a.ready_to_crack {
+        app.backend_catalog.resolve_backend(
+            app.backend_selection,
+            std::path::Path::new(&a.file_path),
+            &a.lock_type,
+            a.ready_to_crack,
+        )
+    } else {
+        crate::engine::backends::BackendType::None
+    };
+
+    let engine_pill = match resolved {
+        crate::engine::backends::BackendType::Hashcat   => Span::styled(" HASHCAT (GPU Accelerator) ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::John      => Span::styled(" JOHN THE RIPPER (SIMD) ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::Fcrackzip => Span::styled(" FCRACKZIP (Dedicated ZIP) ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::Native    => Span::styled(" NATIVE (Pure Rust AVX2) ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        crate::engine::backends::BackendType::None      => Span::styled(" NONE (Inspection Only) ", theme::style_dim()),
+    };
+
     let lines = vec![
         Line::from(vec![
             Span::styled("  Target Path   : ", theme::style_subtext()),
@@ -225,7 +242,7 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
         Line::from(vec![
             Span::styled("  Magic Header  : ", theme::style_subtext()),
             Span::styled(a.magic_header.clone(), Style::default().fg(Color::Magenta)),
-            Span::styled("  │ Lock: ", theme::style_subtext()),
+            Span::styled("  │ Status: ", theme::style_subtext()),
             Span::styled(lock_badge, lock_style),
         ]),
         Line::from(vec![
@@ -234,10 +251,17 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
                 if a.is_encrypted { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() }),
             Span::styled(format!("  (Entropy: {:.2}/8.00 bits) ", a.entropy), theme::style_subtext()),
         ]),
+        Line::from(vec![
+            Span::styled("  Active Engine : ", theme::style_subtext()),
+            engine_pill,
+            Span::styled("  [Press ", theme::style_dim()),
+            Span::styled("E", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(" to switch]", theme::style_dim()),
+        ]),
     ];
 
     let content_layout = Layout::vertical([
-        Constraint::Length(4), // Metadata lines (4 rows)
+        Constraint::Length(5), // Metadata lines (5 rows)
         Constraint::Min(0),    // Entropy gauge
     ])
     .split(inner);

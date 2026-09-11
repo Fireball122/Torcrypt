@@ -29,9 +29,9 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, app: &AppState) {
 
 fn render_left(frame: &mut Frame, area: Rect, app: &AppState) {
     let rows = Layout::vertical([
-        Constraint::Length(14),  // Live Worker Card (with Recovered Key, Backend & Cascade Switcher)
-        Constraint::Length(5),   // Progress Gauge
-        Constraint::Length(5),   // Compute Saturation (GPU + CPU Threads)
+        Constraint::Length(13),  // Live Worker Card (with Recovered Key, Backend & Cascade Switcher)
+        Constraint::Length(3),   // Progress Gauge (Compact)
+        Constraint::Length(3),   // Compute Saturation (Compact)
         Constraint::Min(0),      // Cipher Info & Hardware Acceleration Matrix
     ])
     .split(area);

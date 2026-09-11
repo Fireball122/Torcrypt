@@ -48,12 +48,9 @@ pub fn render_splash(frame: &mut Frame, area: Rect, app: &AppState) {
         art_lines.insert(0, "");
     }
 
-    let color = if f == 12 {
-        Color::Green
-    } else {
-        Color::Yellow
-    };
-    let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    let banner_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let lock_color = if f == 12 { Color::Green } else { Color::Yellow };
+    let lock_style = Style::default().fg(lock_color).add_modifier(Modifier::BOLD);
 
     let status = if f == 12 {
         "[ DECRYPTED ]".to_string()
@@ -61,21 +58,27 @@ pub fn render_splash(frame: &mut Frame, area: Rect, app: &AppState) {
         let dots = (f % 3) + 1;
         format!("[ DECRYPTING{} ]", ".".repeat(dots))
     };
+    let status_style = Style::default().fg(if f == 12 { Color::Green } else { Color::Cyan }).add_modifier(Modifier::BOLD);
+
+    let skip_msg = "[ Press any key to skip ]";
+    let skip_style = Style::default().fg(Color::DarkGray);
 
     let k_banner_width = 65usize;
     let k_banner_height = 6usize;
     let k_lock_body_width = 20usize;
 
-    let content_h = k_banner_height + 1 + art_lines.len() + 1;
+    let content_h = k_banner_height + 1 + art_lines.len() + 2 + 1;
     let top_pad   = height.saturating_sub(content_h) / 2;
 
     let banner_left_pad = width.saturating_sub(k_banner_width) / 2;
     let lock_left_pad   = width.saturating_sub(k_lock_body_width) / 2;
     let status_off      = width.saturating_sub(status.len()) / 2;
+    let skip_off        = width.saturating_sub(skip_msg.len()) / 2;
 
     let banner_pad = " ".repeat(banner_left_pad);
     let lock_pad   = " ".repeat(lock_left_pad);
     let status_pad = " ".repeat(status_off);
+    let skip_pad   = " ".repeat(skip_off);
 
     let mut lines: Vec<Line> = Vec::with_capacity(height);
 
@@ -84,17 +87,18 @@ pub fn render_splash(frame: &mut Frame, area: Rect, app: &AppState) {
     }
 
     for &b in BANNER.iter() {
-        lines.push(Line::from(Span::styled(format!("{}{}", banner_pad, b), style)));
+        lines.push(Line::from(Span::styled(format!("{}{}", banner_pad, b), banner_style)));
     }
 
     lines.push(Line::from(""));
 
     for &l in art_lines.iter() {
-        lines.push(Line::from(Span::styled(format!("{}{}", lock_pad, l), style)));
+        lines.push(Line::from(Span::styled(format!("{}{}", lock_pad, l), lock_style)));
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(format!("{}{}", status_pad, status), style)));
+    lines.push(Line::from(Span::styled(format!("{}{}", status_pad, status), status_style)));
+    lines.push(Line::from(Span::styled(format!("{}{}", skip_pad, skip_msg), skip_style)));
 
     let p = Paragraph::new(lines);
     frame.render_widget(p, area);

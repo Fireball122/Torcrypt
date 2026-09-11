@@ -295,7 +295,7 @@ impl Default for AppState {
         }
 
         let mut state = Self {
-            in_splash:          false,
+            in_splash:          true,
             splash_frame:       0,
             splash_last_tick:   now,
             splash_start_time:  now,
@@ -1096,7 +1096,7 @@ impl AppState {
 
         if self.in_splash {
             static FRAME_DELAYS_MS: [u64; 13] = [
-                500, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 1000
+                250, 70, 70, 70, 70, 70, 70, 70, 70, 70, 70, 70, 400
             ];
             let delay_ms = FRAME_DELAYS_MS[self.splash_frame.min(12)];
             if self.splash_last_tick.elapsed().as_millis() as u64 >= delay_ms {
