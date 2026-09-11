@@ -328,7 +328,19 @@ fn render_thread_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 .bg(Color::Indexed(237))
                 .add_modifier(Modifier::BOLD),
         )
-        .percent(if app.worker_state == WorkerState::Running || app.worker_state == WorkerState::Completed || app.worker_state == WorkerState::Exhausted { 100 } else { 0 })
+        .percent(if app.worker_state == WorkerState::Running {
+            if app.active_engine == ComputeEngine::GpuPrimary {
+                100
+            } else {
+                let total = app.thread_count.max(1) as f64;
+                let active = app.thread_active as f64;
+                ((active / total) * 100.0).clamp(0.0, 100.0) as u16
+            }
+        } else if app.worker_state == WorkerState::Completed {
+            100
+        } else {
+            0
+        })
         .label(label_str);
 
     frame.render_widget(gauge, area);
@@ -421,7 +433,7 @@ fn render_throughput_sparkline(frame: &mut Frame, area: Rect, app: &AppState) {
         .data(&data)
         .style(Style::default().fg(Color::Cyan))
         .bar_set(symbols::bar::NINE_LEVELS)
-        .max(25_000);
+        .max(max_speed.max(100));
 
     frame.render_widget(sparkline, inner);
 }
@@ -430,7 +442,7 @@ fn render_activity_stream(frame: &mut Frame, area: Rect, app: &AppState) {
     let scroll_badge = if app.log_scroll_offset > 0 {
         format!(" [▲ SCROLLED UP +{} │ J/K/PgUp: Scroll │ G/End: Snap Live] ", app.log_scroll_offset)
     } else {
-        " [Live Stream 60 FPS] ".into()
+        " [Live Stream 30 FPS] ".into()
     };
 
     let block = Block::default()

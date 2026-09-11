@@ -38,7 +38,7 @@ impl WordlistProfile {
         let mut char_counts = [0usize; 256];
         let mut total_sampled_bytes = 0usize;
 
-        const MAX_SAMPLE_LINES: usize = 50_000;
+        const MAX_SAMPLE_LINES: usize = 2_500;
         let mut hit_sample_limit = false;
         let mut sampled_raw_bytes = 0usize;
 

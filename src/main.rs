@@ -44,10 +44,11 @@ fn main() -> io::Result<()> {
 }
 
 fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
-    let mut app       = AppState::default();
-    let tick_rate     = Duration::from_millis(33); // 30 FPS
-    let mut last_tick = Instant::now();
-    let mut dirty     = true;
+    let mut app           = AppState::default();
+    let tick_rate         = Duration::from_millis(33); // 30 FPS
+    let mut last_tick     = Instant::now();
+    let mut dirty         = true;
+    let mut mouse_capture = true;
 
     loop {
         // Drain all pending telemetry events from the background decryption worker
@@ -87,6 +88,16 @@ fn run(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
                             if !app.search_mode && !app.show_help && !app.engine_modal_open && !app.mask_modal_open =>
                         {
                             return Ok(());
+                        }
+                        KeyCode::F(2) => {
+                            mouse_capture = !mouse_capture;
+                            if mouse_capture {
+                                let _ = execute!(term.backend_mut(), EnableMouseCapture);
+                                app.add_log(app::LogLevel::Info, "", "Mouse capture ENABLED (Click & Scroll)");
+                            } else {
+                                let _ = execute!(term.backend_mut(), DisableMouseCapture);
+                                app.add_log(app::LogLevel::Warn, "", "Mouse capture DISABLED (Standard terminal text selection enabled)");
+                            }
                         }
                         KeyCode::Esc => {
                             if app.engine_modal_open { app.engine_modal_open = false; }

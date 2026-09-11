@@ -27,6 +27,7 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
 
     let mut spans: Vec<Span> = vec![
         key("1-5"), label("Tabs"),
+        key("F2"), label("Mouse"),
     ];
 
     match app.current_tab {
