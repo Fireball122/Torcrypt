@@ -8,6 +8,7 @@ $Repo = "Fireball122/Torcrypt"
 $BinName = "torcrypt.exe"
 $ShortAlias = "dt.exe"
 $InstallDir = "$env:LOCALAPPDATA\Programs\torcrypt"
+$WordlistsDir = Join-Path $InstallDir "wordlists"
 
 Write-Host ""
 Write-Host "  ╔═══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
@@ -267,7 +268,7 @@ if ($IsUpdate) {
 Write-Host "═════════════════════════════════════════════════════════════════" -ForegroundColor Green
 Write-Host "  Executable : $TargetPath" -ForegroundColor White
 Write-Host "  Shortcut   : dt (or torcrypt)" -ForegroundColor White
-if ((Test-Path -Path $WordlistsDir) -and ((Get-ChildItem -Path $WordlistsDir).Count -gt 0)) {
+if ($WordlistsDir -and (Test-Path -Path $WordlistsDir) -and ((Get-ChildItem -Path $WordlistsDir).Count -gt 0)) {
     Write-Host "  Wordlists  : $WordlistsDir" -ForegroundColor Cyan
 }
 Write-Host ""
