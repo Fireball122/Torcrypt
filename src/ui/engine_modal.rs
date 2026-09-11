@@ -167,7 +167,7 @@ pub fn render_engine_modal(frame: &mut Frame, area: Rect, app: &mut AppState) {
     // Close on click anywhere in modal border (lowest priority — row regions override it)
     app.click_regions.push((modal_rect, crate::app::ClickAction::CloseModal));
     // Register clickable modal rows — each row is 2 lines tall, starting at layout[1].y
-    for i in 0usize..4 {
+    for i in 0usize..5 {
         let row_y = layout[1].y + (i as u16) * 2;
         if row_y + 1 >= layout[1].y + layout[1].height { break; }
         app.click_regions.push((

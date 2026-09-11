@@ -47,7 +47,7 @@ fn render_progress_bar(frame: &mut Frame, area: Rect, app: &AppState) {
                     .border_style(theme::style_amber()),
             )
             .gauge_style(Style::default().fg(Color::Yellow).bg(Color::Indexed(237)))
-            .percent(app.bench_progress as u16)
+            .percent((app.bench_progress as u16).min(100))
             .label(format!("{}% complete", app.bench_progress));
         frame.render_widget(gauge, area);
     } else {

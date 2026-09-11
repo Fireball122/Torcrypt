@@ -944,7 +944,7 @@ impl AppState {
 
     pub fn progress_pct(&self) -> f64 {
         if self.items_total == 0 { return 0.0; }
-        (self.items_done as f64 / self.items_total as f64) * 100.0
+        ((self.items_done as f64 / self.items_total as f64) * 100.0).clamp(0.0, 100.0)
     }
 
     pub fn thread_saturation_pct(&self) -> u8 {

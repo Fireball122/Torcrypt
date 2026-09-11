@@ -176,7 +176,7 @@ fn render_smart_inspector(frame: &mut Frame, area: Rect, app: &mut AppState) {
     render_attack_launcher(frame, rows[1], app);
 }
 
-fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
+fn render_inspection_report(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let block = Block::default()
         .title(Line::from(vec![
             Span::raw("─ ◈ "),
@@ -187,6 +187,8 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
         .border_style(theme::style_border());
     let inner = block.inner(area);
     frame.render_widget(block, area);
+
+
 
     let a = &app.analysis;
 
@@ -219,13 +221,43 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
         crate::engine::backends::BackendType::None
     };
 
-    let engine_pill = match resolved {
-        crate::engine::backends::BackendType::Hashcat   => Span::styled(" HASHCAT (GPU Accelerator) ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        crate::engine::backends::BackendType::John      => Span::styled(" JOHN THE RIPPER (SIMD) ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        crate::engine::backends::BackendType::Fcrackzip => Span::styled(" FCRACKZIP (Dedicated ZIP) ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-        crate::engine::backends::BackendType::Native    => Span::styled(" NATIVE (Pure Rust AVX2) ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        crate::engine::backends::BackendType::None      => Span::styled(" NONE (Inspection Only) ", theme::style_dim()),
-    };
+    use crate::engine::backends::BackendSelection;
+    let mut engine_spans = vec![Span::styled("  Engine: ", theme::style_subtext())];
+
+    let pill_defs: [(BackendSelection, &str); 5] = [
+        (BackendSelection::Auto, "[Auto]"),
+        (BackendSelection::Hashcat, "[Hashcat]"),
+        (BackendSelection::John, "[John]"),
+        (BackendSelection::Fcrackzip, "[fcrackzip]"),
+        (BackendSelection::Native, "[Native]"),
+    ];
+
+    let engine_row_y = inner.y + 4; // 5th row inside inner block
+    let mut cur_pill_x = inner.x + 10;
+
+    for (sel, label) in pill_defs {
+        let is_sel = app.backend_selection == sel;
+        let style = if is_sel {
+            Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan).bg(Color::Indexed(237))
+        };
+        engine_spans.push(Span::styled(format!(" {} ", label), style));
+        engine_spans.push(Span::raw(" "));
+
+        let pill_w = (label.len() + 2) as u16;
+        app.click_regions.push((
+            ratatui::layout::Rect::new(cur_pill_x, engine_row_y, pill_w, 1),
+            crate::app::ClickAction::SelectEnginePill(sel),
+        ));
+        cur_pill_x += pill_w + 1;
+    }
+
+    engine_spans.push(Span::styled("[E: Modal]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+    app.click_regions.push((
+        ratatui::layout::Rect::new(cur_pill_x, engine_row_y, 10, 1),
+        crate::app::ClickAction::OpenEngineModal,
+    ));
 
     let lines = vec![
         Line::from(vec![
@@ -251,13 +283,7 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
                 if a.is_encrypted { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { theme::style_dim() }),
             Span::styled(format!("  (Entropy: {:.2}/8.00 bits) ", a.entropy), theme::style_subtext()),
         ]),
-        Line::from(vec![
-            Span::styled("  Active Engine : ", theme::style_subtext()),
-            engine_pill,
-            Span::styled("  [Press ", theme::style_dim()),
-            Span::styled("E", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(" to switch]", theme::style_dim()),
-        ]),
+        Line::from(engine_spans),
     ];
 
     let content_layout = Layout::vertical([
@@ -274,7 +300,7 @@ fn render_inspection_report(frame: &mut Frame, area: Rect, app: &AppState) {
                 .fg(if a.entropy > 7.5 { Color::Green } else if a.entropy > 5.0 { Color::Yellow } else { Color::Cyan })
                 .bg(Color::Indexed(237)),
         )
-        .percent(entropy_pct)
+        .percent(entropy_pct.min(100))
         .label(format!("{:.2} bits/byte entropy", a.entropy));
 
     frame.render_widget(entropy_gauge, content_layout[1]);
@@ -487,6 +513,12 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &mut AppState) {
         return;
     }
 
+    let sub_sections = Layout::vertical([
+        Constraint::Min(0),     // Strategies
+        Constraint::Length(3),  // Big Launch Button
+    ])
+    .split(inner);
+
     let mut strat_lines: Vec<Line> = vec![
         Line::from(vec![
             Span::styled("  Select Attack Strategy / Tool Profile  ", theme::style_subtext()),
@@ -521,13 +553,17 @@ fn render_attack_launcher(frame: &mut Frame, area: Rect, app: &mut AppState) {
             theme::style_dim()
         };
 
+        let title_max = sub_sections[0].width.saturating_sub(24).max(15) as usize;
         strat_lines.push(Line::from(vec![
             pill,
-            Span::styled(format!(" {}", opt.title), title_style),
+            Span::styled(format!(" {}", truncate(&opt.title, title_max)), title_style),
             rec_badge,
         ]));
+
+        let desc_text = format!("      ↳ Feasibility: {} │ Keyspace: {} │ {}", opt.feasibility, opt.keyspace_name, opt.desc);
+        let desc_max = sub_sections[0].width.saturating_sub(4).max(20) as usize;
         strat_lines.push(Line::from(vec![
-            Span::styled(format!("      ↳ Feasibility: {} │ Keyspace: {} │ {}", opt.feasibility, opt.keyspace_name, opt.desc), desc_style),
+            Span::styled(truncate(&desc_text, desc_max), desc_style),
         ]));
         strat_lines.push(Line::from(vec![Span::raw("")]));
     }

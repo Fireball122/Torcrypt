@@ -254,7 +254,7 @@ fn render_progress_gauge(frame: &mut Frame, area: Rect, app: &AppState) {
                 .bg(Color::Indexed(237))
                 .add_modifier(Modifier::BOLD),
         )
-        .percent(pct as u16)
+        .percent((pct as u16).min(100))
         .label(label_str);
 
     frame.render_widget(gauge, area);

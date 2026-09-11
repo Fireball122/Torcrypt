@@ -679,7 +679,6 @@ fn find_executable(name: &str) -> Option<PathBuf> {
             if is_executable(&candidate) {
                 return Some(candidate);
             }
-            // Windows fallback with .exe
             #[cfg(target_os = "windows")]
             {
                 let candidate_exe = dir.join(format!("{}.exe", name));
@@ -690,7 +689,50 @@ fn find_executable(name: &str) -> Option<PathBuf> {
         }
     }
 
-    // 2. Common non-PATH Unix locations
+    // 2. Windows-specific well-known paths (WinGet, Chocolatey, Scoop, standard roots)
+    #[cfg(target_os = "windows")]
+    {
+        let mut win_dirs: Vec<PathBuf> = Vec::new();
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            let lad = PathBuf::from(localappdata);
+            win_dirs.push(lad.join("Microsoft\\WinGet\\Links"));
+            win_dirs.push(lad.join("Programs\\torcrypt\\bin"));
+            win_dirs.push(lad.join(format!("Programs\\{}", name)));
+            win_dirs.push(lad.join(name));
+        }
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            let up = PathBuf::from(userprofile);
+            win_dirs.push(up.join("scoop\\shims"));
+            win_dirs.push(up.join(format!("scoop\\apps\\{}\\current", name)));
+            win_dirs.push(up.join(format!("scoop\\apps\\{}\\current\\run", name)));
+            win_dirs.push(up.join(name));
+            win_dirs.push(up.join(format!("{}\\run", name)));
+        }
+        if let Ok(programdata) = std::env::var("ProgramData") {
+            let pd = PathBuf::from(programdata);
+            win_dirs.push(pd.join("chocolatey\\bin"));
+        }
+        win_dirs.push(PathBuf::from(format!("C:\\tools\\{}", name)));
+        win_dirs.push(PathBuf::from(format!("C:\\tools\\{}\\run", name)));
+        win_dirs.push(PathBuf::from(format!("C:\\{}", name)));
+        win_dirs.push(PathBuf::from(format!("C:\\{}\\run", name)));
+        win_dirs.push(PathBuf::from(format!("C:\\Program Files\\{}", name)));
+        win_dirs.push(PathBuf::from(format!("C:\\Program Files\\{}\\run", name)));
+        win_dirs.push(PathBuf::from(format!("C:\\Program Files (x86)\\{}", name)));
+
+        for dir in &win_dirs {
+            let cand = dir.join(name);
+            if is_executable(&cand) {
+                return Some(cand);
+            }
+            let cand_exe = dir.join(format!("{}.exe", name));
+            if is_executable(&cand_exe) {
+                return Some(cand_exe);
+            }
+        }
+    }
+
+    // 3. Common non-PATH Unix locations
     let common_dirs = [
         "/usr/local/bin",
         "/usr/bin",
