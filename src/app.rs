@@ -66,6 +66,7 @@ pub enum ClickAction {
     CloseModal,
     ScrollUp,
     ScrollDown,
+    SelectSession(usize),
 }
 
 // ─── Re-Exported Decoupled Engine Protocol ────────────────────────────────────
@@ -247,6 +248,8 @@ pub struct AppState {
 
     // Tick counter (drives animations)
     pub tick:               u64,
+    pub file_table_state:     ratatui::widgets::TableState,
+    pub sessions_table_state: ratatui::widgets::TableState,
     /// Clickable regions populated each frame by render functions; cleared at render start.
     pub click_regions:      Vec<(Rect, ClickAction)>,
 }
@@ -369,6 +372,8 @@ impl Default for AppState {
             avx2,
             rdrand,
             vaes512,
+            file_table_state:     ratatui::widgets::TableState::default(),
+            sessions_table_state: ratatui::widgets::TableState::default(),
             tick:               0,
             click_regions:      Vec::new(),
         };
@@ -969,6 +974,9 @@ impl AppState {
                             self.analyze_selected_file();
                         }
                     }
+                }
+                ClickAction::SelectSession(idx) => {
+                    self.sessions_selected = idx;
                 }
                 ClickAction::SelectAttack(idx) => {
                     if idx < self.attack_options.len() {

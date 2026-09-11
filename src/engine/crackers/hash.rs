@@ -133,9 +133,12 @@ impl HashTarget {
                     match self.algo {
                         HashAlgo::Md5 => {
                             for chunk in candidates.chunks(8) {
-                                let byte_refs: Vec<&[u8]> = chunk.iter().map(|s| s.as_bytes()).collect();
+                                let mut byte_refs = [&b""[..]; 8];
+                                for (i, s) in chunk.iter().enumerate() {
+                                    byte_refs[i] = s.as_bytes();
+                                }
                                 unsafe {
-                                    if let Some(idx) = crate::engine::crypto::simd::avx2::test_md5_8way(&byte_refs, target_words) {
+                                    if let Some(idx) = crate::engine::crypto::simd::avx2::test_md5_8way(&byte_refs[..chunk.len()], target_words) {
                                         return Some(chunk[idx].clone());
                                     }
                                 }
@@ -143,9 +146,12 @@ impl HashTarget {
                         }
                         HashAlgo::Ntlm => {
                             for chunk in candidates.chunks(8) {
-                                let str_refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
+                                let mut str_refs = [""; 8];
+                                for (i, s) in chunk.iter().enumerate() {
+                                    str_refs[i] = s.as_str();
+                                }
                                 unsafe {
-                                    if let Some(idx) = crate::engine::crypto::simd::avx2::test_ntlm_8way(&str_refs, target_words) {
+                                    if let Some(idx) = crate::engine::crypto::simd::avx2::test_ntlm_8way(&str_refs[..chunk.len()], target_words) {
                                         return Some(chunk[idx].clone());
                                     }
                                 }

@@ -52,9 +52,6 @@ fn render_sessions_table(frame: &mut Frame, area: Rect, app: &mut AppState) {
         .border_type(BorderType::Rounded)
         .border_style(theme::style_border());
 
-    let filtered = app.filtered_sessions();
-    let sel = app.sessions_selected.min(filtered.len().saturating_sub(1));
-
     let header = Row::new(vec![
         Cell::from("  ID").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
         Cell::from("Target Path").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
@@ -64,36 +61,44 @@ fn render_sessions_table(frame: &mut Frame, area: Rect, app: &mut AppState) {
         Cell::from("Created At").style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
     ]);
 
-    let rows: Vec<Row> = filtered
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            let is_sel = i == sel;
-            let prefix  = if is_sel { "▶ " } else { "  " };
+    let (rows, filtered_count, sel) = {
+        let filtered = app.filtered_sessions();
+        let count = filtered.len();
+        let selected = app.sessions_selected.min(count.saturating_sub(1));
 
-            let id_cell = Cell::from(format!("{}{}", prefix, s.id)).style(if is_sel {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            });
+        let r: Vec<Row> = filtered
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let is_sel = i == selected;
+                let prefix  = if is_sel { "▶ " } else { "  " };
 
-            let target_str = truncate(&s.target, 28);
+                let id_cell = Cell::from(format!("{}{}", prefix, s.id)).style(if is_sel {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                });
 
-            Row::new(vec![
-                id_cell,
-                Cell::from(target_str).style(theme::style_subtext()),
-                Cell::from(s.cipher.as_str()).style(Style::default().fg(Color::Magenta)),
-                Cell::from(s.kdf.as_str()).style(theme::style_dim()),
-                Cell::from(s.status.as_str()).style(theme::status_style(&s.status)),
-                Cell::from(s.created_at.as_str()).style(theme::style_dim()),
-            ])
-            .style(if is_sel {
-                Style::default().bg(Color::Indexed(237)).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
+                let target_str = truncate(&s.target, 28);
+
+                Row::new(vec![
+                    id_cell,
+                    Cell::from(target_str).style(theme::style_subtext()),
+                    Cell::from(s.cipher.clone()).style(Style::default().fg(Color::Magenta)),
+                    Cell::from(s.kdf.clone()).style(theme::style_dim()),
+                    Cell::from(s.status.clone()).style(theme::status_style(&s.status)),
+                    Cell::from(s.created_at.clone()).style(theme::style_dim()),
+                ])
+                .style(if is_sel {
+                    Style::default().bg(Color::Indexed(237)).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                })
             })
-        })
-        .collect();
+            .collect();
+
+        (r, count, selected)
+    };
 
     let widths = [
         Constraint::Length(12),  // ID
@@ -104,14 +109,28 @@ fn render_sessions_table(frame: &mut Frame, area: Rect, app: &mut AppState) {
         Constraint::Length(16),  // Created At
     ];
 
-    let mut ts = TableState::default().with_selected(Some(sel));
+    app.sessions_table_state.select(Some(sel));
     let table = Table::new(rows, widths)
         .block(block)
         .header(header)
         .column_spacing(1)
         .row_highlight_style(Style::default().bg(Color::Indexed(237)));
 
-    frame.render_stateful_widget(table, area, &mut ts);
+    frame.render_stateful_widget(table, area, &mut app.sessions_table_state);
+
+    let offset = app.sessions_table_state.offset();
+    let visible_rows = area.height.saturating_sub(2) as usize;
+    let data_start_y = area.y + 2;
+    for i in 0..visible_rows {
+        let sess_idx = offset + i;
+        if sess_idx >= filtered_count { break; }
+        let row_y = data_start_y + i as u16;
+        if row_y >= area.y + area.height.saturating_sub(1) { break; }
+        app.click_regions.push((
+            ratatui::layout::Rect::new(area.x + 1, row_y, area.width.saturating_sub(2), 1),
+            crate::app::ClickAction::SelectSession(sess_idx),
+        ));
+    }
 }
 
 // ─── Right Sidebar Inspector ─────────────────────────────────────────────────

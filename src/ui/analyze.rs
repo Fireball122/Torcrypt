@@ -6,7 +6,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Cell, Gauge, Paragraph, Row, Table, TableState,
+        Block, BorderType, Borders, Cell, Gauge, Paragraph, Row, Table,
         Wrap,
     },
     Frame,
@@ -81,6 +81,8 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
     ]);
 
     let sel = app.file_selected_idx;
+    let name_max_len = rows[1].width.saturating_sub(26).max(20) as usize;
+
     let table_rows: Vec<Row> = app
         .dir_entries
         .iter()
@@ -119,7 +121,7 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
 
             Row::new(vec![
                 Cell::from(format!("{}{}", prefix, entry.badge)).style(type_style),
-                Cell::from(truncate(&entry.name, 32)).style(name_style),
+                Cell::from(truncate(&entry.name, name_max_len)).style(name_style),
                 Cell::from(size_str).style(theme::style_dim()),
             ])
             .style(if is_sel {
@@ -136,23 +138,27 @@ fn render_file_explorer(frame: &mut Frame, area: Rect, app: &mut AppState) {
         Constraint::Length(10),
     ];
 
-    let mut ts = TableState::default().with_selected(Some(sel));
+    app.file_table_state.select(Some(sel));
     let table = Table::new(table_rows, widths)
         .block(table_block)
         .header(header)
         .column_spacing(1)
         .row_highlight_style(Style::default().bg(Color::Indexed(237)));
 
-    frame.render_stateful_widget(table, rows[1], &mut ts);
-    // Register clickable file rows — table inner area starts after block border and header row
-    // rows[1] is the full table rect; block border = 1, header = 1 → data starts at y+2
-    let data_start_y = rows[1].y + 2; // border + header
-    for i in 0..app.dir_entries.len() {
+    frame.render_stateful_widget(table, rows[1], &mut app.file_table_state);
+
+    // Register clickable file rows synchronized with table scroll offset
+    let offset = app.file_table_state.offset();
+    let visible_rows = rows[1].height.saturating_sub(2) as usize; // border + header
+    let data_start_y = rows[1].y + 2;
+    for i in 0..visible_rows {
+        let file_idx = offset + i;
+        if file_idx >= app.dir_entries.len() { break; }
         let row_y = data_start_y + i as u16;
-        if row_y >= rows[1].y + rows[1].height { break; }
+        if row_y >= rows[1].y + rows[1].height.saturating_sub(1) { break; }
         app.click_regions.push((
-            ratatui::layout::Rect::new(rows[1].x, row_y, rows[1].width, 1),
-            crate::app::ClickAction::SelectFile(i),
+            ratatui::layout::Rect::new(rows[1].x + 1, row_y, rows[1].width.saturating_sub(2), 1),
+            crate::app::ClickAction::SelectFile(file_idx),
         ));
     }
 }
