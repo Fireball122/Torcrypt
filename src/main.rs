@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_variables)]
 // main.rs — TORCRYPT TUI Entry Point: Crossterm raw mode + 30 FPS event loop with Interactive Log Scrolling
 mod app;
+mod cli;
 pub mod engine;
 mod ui;
 
@@ -16,6 +17,11 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 fn main() -> io::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(res) = cli::handle_cli_args(&args) {
+        return res;
+    }
+
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
