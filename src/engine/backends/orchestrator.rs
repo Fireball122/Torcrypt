@@ -323,7 +323,8 @@ impl BackendJob {
                         break;
                     }
                     if let Ok(line) = line_res {
-                        let trimmed = line.trim();
+                        let clean_str = line.replace('\r', "");
+                        let trimmed = clean_str.trim();
                         if trimmed.is_empty() {
                             continue;
                         }
@@ -530,14 +531,22 @@ pub fn parse_hashcat_line(line: &str) -> Option<(f64, u64, u64)> {
     let mut done = 0;
     let mut total = 0;
 
-    let parts: Vec<&str> = line.split('\t').collect();
-    for i in 0..parts.len() {
-        if parts[i] == "SPEED" && i + 1 < parts.len() {
-            speed = parts[i + 1].parse::<f64>().unwrap_or(0.0);
-        } else if parts[i] == "CUR_EXEC" && i + 1 < parts.len() {
-            done = parts[i + 1].parse::<u64>().unwrap_or(0);
-        } else if parts[i] == "TOTAL_EXEC" && i + 1 < parts.len() {
-            total = parts[i + 1].parse::<u64>().unwrap_or(0);
+    // Parse tokens split by whitespace or tabs
+    let tokens: Vec<&str> = line
+        .split(|c: char| c == '\t' || c == ' ')
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    for i in 0..tokens.len() {
+        if tokens[i] == "SPEED" && i + 1 < tokens.len() {
+            speed = tokens[i + 1].parse::<f64>().unwrap_or(0.0);
+        } else if tokens[i] == "PROGRESS" && i + 2 < tokens.len() {
+            done = tokens[i + 1].parse::<u64>().unwrap_or(0);
+            total = tokens[i + 2].parse::<u64>().unwrap_or(0);
+        } else if tokens[i] == "CUR_EXEC" && i + 1 < tokens.len() {
+            done = tokens[i + 1].parse::<u64>().unwrap_or(0);
+        } else if tokens[i] == "TOTAL_EXEC" && i + 1 < tokens.len() {
+            total = tokens[i + 1].parse::<u64>().unwrap_or(0);
         }
     }
 
@@ -561,6 +570,22 @@ pub fn parse_hashcat_line(line: &str) -> Option<(f64, u64, u64)> {
         }
     }
 
+    // Also parse traditional Progress line: "Progress.........: 175157/14344384 (1.22%)"
+    if line.contains("Progress.") {
+        if let Some(idx) = line.find(':') {
+            let part = line[idx + 1..].trim();
+            if let Some(slash) = part.find('/') {
+                let d_str = part[..slash].trim();
+                let rest = part[slash + 1..].trim();
+                let t_str = rest.split_whitespace().next().unwrap_or("");
+                if let (Ok(d), Ok(t)) = (d_str.parse::<u64>(), t_str.parse::<u64>()) {
+                    done = d;
+                    total = t;
+                }
+            }
+        }
+    }
+
     if speed > 0.0 || done > 0 || total > 0 {
         Some((speed, done, total))
     } else {
@@ -569,42 +594,45 @@ pub fn parse_hashcat_line(line: &str) -> Option<(f64, u64, u64)> {
 }
 
 pub fn parse_hashcat_cracked(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.contains('\t') {
+    let clean = line.replace('\r', "").trim().to_string();
+    if clean.is_empty() || clean.contains('\t') {
         return None;
     }
 
-    // Exclude header or informational lines containing colon
-    if trimmed.starts_with("Session.")
-        || trimmed.starts_with("Status.")
-        || trimmed.starts_with("Hash.")
-        || trimmed.starts_with("Time.")
-        || trimmed.starts_with("Speed.")
-        || trimmed.starts_with("Recovered.")
-        || trimmed.starts_with("Progress.")
-        || trimmed.starts_with("Rejected.")
-        || trimmed.starts_with("Restore.")
-        || trimmed.starts_with("Candidates.")
-        || trimmed.starts_with("Hardware.")
-        || trimmed.starts_with("HWMon.")
-        || trimmed.starts_with("Watchdog:")
-        || trimmed.starts_with("Device #")
-        || trimmed.starts_with("Started:")
-        || trimmed.starts_with("Stopped:")
-        || trimmed.starts_with("Guess.")
-        || trimmed.starts_with("Dictionary cache")
-        || trimmed.starts_with("INFO:")
-        || trimmed.starts_with("WARN:")
-        || trimmed.starts_with("ERROR:")
-        || trimmed.starts_with("ATTENTION!")
+    // Exclude Hashcat diagnostic or UI status lines
+    if clean.contains("[s]tatus")
+        || clean.contains("quit =>")
+        || clean.contains("[p]ause")
+        || clean.contains("STATUS")
+        || clean.contains("SPEED")
+        || clean.contains("PROGRESS")
+        || clean.contains("EXEC_RUNTIME")
+        || clean.contains("Approaching")
+        || clean.contains("Dictionary cache")
+        || clean.contains("Started:")
+        || clean.contains("Stopped:")
+        || clean.contains("Watchdog:")
+        || clean.contains("Device #")
+        || clean.contains("Hardware.")
+        || clean.contains("Session.")
+        || clean.contains("Hash.")
+        || clean.contains("Time.")
+        || clean.contains("Speed.")
+        || clean.contains("Recovered.")
+        || clean.contains("Progress.")
+        || clean.contains("Rejected.")
+        || clean.contains("Restore.")
+        || clean.contains("Candidates.")
     {
         return None;
     }
 
-    if let Some(idx) = trimmed.rfind(':') {
-        let prefix = &trimmed[..idx];
-        let plaintext = trimmed[idx + 1..].trim();
-        if !plaintext.is_empty() && !prefix.starts_with("Device") && !prefix.contains("abort") && !prefix.contains("trigger") {
+    if let Some(idx) = clean.rfind(':') {
+        let prefix = clean[..idx].trim();
+        let plaintext = clean[idx + 1..].trim();
+        // A valid hash format (MD5 hex, WPA*01, WPA*02, $zip2$, $pdf$) NEVER contains spaces before the colon!
+        // If the prefix has spaces, it is an English sentence (e.g. "Started: Mon Sep 14")
+        if !plaintext.is_empty() && !prefix.contains(' ') && prefix.len() >= 8 {
             return Some(plaintext.to_string());
         }
     }

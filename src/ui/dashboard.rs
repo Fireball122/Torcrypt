@@ -487,8 +487,9 @@ fn render_activity_stream(frame: &mut Frame, area: Rect, app: &AppState) {
             spans.push(Span::styled("│ ", theme::style_dim()));
         }
 
+        let safe_msg = entry.message.replace('\r', " ");
         spans.push(Span::styled(
-            truncate(&entry.message, inner.width.saturating_sub(38) as usize),
+            truncate(&safe_msg, inner.width.saturating_sub(38) as usize),
             if entry.level == LogLevel::Lock {
                 Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
             } else if entry.level == LogLevel::Warn {
