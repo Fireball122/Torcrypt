@@ -329,7 +329,7 @@ if ((Test-Path -Path $Top100kPath) -and ((Get-Item -Path $Top100kPath).Length -g
     $DoDownload100k = Prompt-Choice -PromptMessage "Download SecLists Top-100k wordlist (~1 MB)?" -DefaultYes $true
     if ($DoDownload100k) {
         Write-Host "  [*] Downloading SecLists Top-100k..." -ForegroundColor Cyan
-        $Top100kUrl = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10-million-password-list-top-100000.txt"
+        $Top100kUrl = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/xato-net-10-million-passwords-100000.txt"
         try {
             if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
                 & curl.exe -fSL -o "$Top100kPath" "$Top100kUrl" --silent

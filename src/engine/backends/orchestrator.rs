@@ -255,6 +255,37 @@ impl BackendJob {
         let btype = backend_type;
         let actual_target_clone = actual_target.clone();
         let backend_bin_path = backend_bin.to_path_buf();
+
+        let tx_err = tx.clone();
+        let stop_err = Arc::clone(&stop_flag);
+        let last_stderr_msg = Arc::new(std::sync::Mutex::new(String::new()));
+        let last_stderr_clone = Arc::clone(&last_stderr_msg);
+
+        if let Some(err) = stderr {
+            thread::spawn(move || {
+                let reader = BufReader::new(err);
+                for line_res in reader.lines() {
+                    if stop_err.load(Ordering::Relaxed) { break; }
+                    if let Ok(line) = line_res {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() {
+                            if let Ok(mut l) = last_stderr_clone.lock() {
+                                *l = trimmed.to_string();
+                            }
+                            let _ = tx_err.send(BackendTelemetry {
+                                status: BackendStatus::Running,
+                                speed_hps: 0.0,
+                                progress_done: 0,
+                                progress_total: 0,
+                                eta_secs: 0.0,
+                                log_line: Some(format!("[backend stderr] {}", trimmed)),
+                            });
+                        }
+                    }
+                }
+            });
+        }
+
         let reader_thr = thread::spawn(move || {
             let mut last_speed = 0.0;
             let mut last_done = 0;
@@ -316,25 +347,7 @@ impl BackendJob {
                 }
             }
 
-            // Also check stderr for diagnostics
-            if let Some(err) = stderr {
-                let reader = BufReader::new(err);
-                for line_res in reader.lines().take(50) {
-                    if let Ok(line) = line_res {
-                        let trimmed = line.trim();
-                        if !trimmed.is_empty() {
-                            let _ = tx_clone.send(BackendTelemetry {
-                                status: BackendStatus::Running,
-                                speed_hps: last_speed,
-                                progress_done: last_done,
-                                progress_total: last_total,
-                                eta_secs: 0.0,
-                                log_line: Some(format!("[backend stderr] {}", trimmed)),
-                            });
-                        }
-                    }
-                }
-            }
+            // Stderr is read concurrently in real-time background thread above
 
             // Check potfile / show fallback if password was not captured from live stdout
             if found_password.is_none() {
@@ -391,14 +404,26 @@ impl BackendJob {
                     log_line: Some("Key Recovered by External Backend!".into()),
                 });
             } else {
-                let _ = tx_clone.send(BackendTelemetry {
-                    status: BackendStatus::Exhausted,
-                    speed_hps: 0.0,
-                    progress_done: last_done,
-                    progress_total: last_total,
-                    eta_secs: 0.0,
-                    log_line: Some("External backend completed: No password found".into()),
-                });
+                let err_msg = last_stderr_msg.lock().ok().map(|s| s.clone()).unwrap_or_default();
+                if !err_msg.is_empty() {
+                    let _ = tx_clone.send(BackendTelemetry {
+                        status: BackendStatus::Failed(format!("{}: {}", btype.short_name(), err_msg)),
+                        speed_hps: 0.0,
+                        progress_done: last_done,
+                        progress_total: last_total,
+                        eta_secs: 0.0,
+                        log_line: Some(format!("[-] {} exited with error: {}", btype.short_name(), err_msg)),
+                    });
+                } else {
+                    let _ = tx_clone.send(BackendTelemetry {
+                        status: BackendStatus::Exhausted,
+                        speed_hps: 0.0,
+                        progress_done: last_done,
+                        progress_total: last_total,
+                        eta_secs: 0.0,
+                        log_line: Some("External backend completed: No password found".into()),
+                    });
+                }
             }
         });
 

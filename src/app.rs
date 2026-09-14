@@ -738,6 +738,50 @@ impl AppState {
         self.current_tab = Tab::Dashboard;
     }
 
+        pub fn export_activity_logs(&mut self) -> Result<std::path::PathBuf, String> {
+        let filename = "torcrypt_activity.log";
+        let out_path = self.current_dir.join(filename);
+
+        let mut text = String::new();
+        text.push_str("=== TORCRYPT ACTIVITY LOG DUMP ===\n");
+        text.push_str(&format!("Exported at: {}\n", chrono::Utc::now().to_rfc3339()));
+        text.push_str(&format!("Target: {}\n", self.target_path));
+        text.push_str(&format!("Cipher: {}\n", self.cipher_suite));
+        text.push_str(&format!("Active Engine: {}\n", self.active_engine.display_name()));
+        text.push_str(&format!("Active Backend: {}\n", self.active_backend.display_name()));
+        text.push_str("----------------------------------\n\n");
+
+        for entry in &self.log_ring {
+            let level_str = match entry.level {
+                LogLevel::Info => "INFO",
+                LogLevel::Lock => "LOCK",
+                LogLevel::Warn => "WARN",
+                LogLevel::Err  => "ERR!",
+            };
+            if entry.path.is_empty() {
+                text.push_str(&format!("[{}] [{}] {}\n", entry.timestamp, level_str, entry.message));
+            } else {
+                text.push_str(&format!("[{}] [{}] [{}] {}\n", entry.timestamp, level_str, entry.path, entry.message));
+            }
+        }
+
+        std::fs::write(&out_path, text.as_bytes())
+            .map_err(|e| format!("Failed to write log file: {}", e))?;
+
+        #[cfg(target_os = "windows")]
+        {
+            let mut clip = std::process::Command::new("clip");
+            if let Ok(mut child) = clip.stdin(std::process::Stdio::piped()).spawn() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = std::io::Write::write_all(&mut stdin, text.as_bytes());
+                }
+            }
+        }
+
+        self.add_log(LogLevel::Lock, "", &format!("[+] Activity logs saved to {} (Copied to Clipboard)", filename));
+        Ok(out_path)
+    }
+
     pub fn handle_telemetry(&mut self, event: TelemetryEvent) {
         match event {
             TelemetryEvent::Log { level, path, message } => {
@@ -1211,6 +1255,9 @@ impl AppState {
 
             'g' | 'G' if self.current_tab == Tab::Dashboard => {
                 self.log_scroll_offset = 0;
+            }
+            'l' | 'L' if self.current_tab == Tab::Dashboard => {
+                let _ = self.export_activity_logs();
             }
 
             'a' | 'A' if self.current_tab == Tab::Analyze => {

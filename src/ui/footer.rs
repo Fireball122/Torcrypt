@@ -71,6 +71,8 @@ pub fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect, app: &AppSt
             spans.push(label("Cascade"));
             spans.push(key("C"));
             spans.push(label("Cancel"));
+            spans.push(key("L"));
+            spans.push(label("Copy Log"));
             spans.push(key("PgUp/Dn or J/K"));
             spans.push(label("Scroll Log"));
             if app.log_scroll_offset > 0 {
