@@ -671,6 +671,29 @@ pub fn hashcat_mode_for(cipher_desc: &str) -> Option<u32> {
     None
 }
 
+fn scan_dir_for_exe(dir: &Path, exe_name: &str, depth: usize) -> Option<PathBuf> {
+    if depth == 0 || !dir.is_dir() {
+        return None;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                    if file_name.eq_ignore_ascii_case(exe_name) {
+                        return Some(path);
+                    }
+                }
+            } else if path.is_dir() {
+                if let Some(found) = scan_dir_for_exe(&path, exe_name, depth - 1) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn find_executable(name: &str) -> Option<PathBuf> {
     // 1. Check system PATH
     if let Ok(path_var) = std::env::var("PATH") {
@@ -730,6 +753,25 @@ fn find_executable(name: &str) -> Option<PathBuf> {
                 return Some(cand_exe);
             }
         }
+
+        // Recursive scan within torcrypt/bin and scoop/apps up to 4 levels deep
+        let target_exe = format!("{}.exe", name);
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            let torcrypt_bin = PathBuf::from(localappdata).join("Programs\\torcrypt\\bin");
+            if let Some(found) = scan_dir_for_exe(&torcrypt_bin, &target_exe, 4) {
+                return Some(found);
+            }
+        }
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            let scoop_apps = PathBuf::from(userprofile).join("scoop\\apps");
+            if let Some(found) = scan_dir_for_exe(&scoop_apps, &target_exe, 4) {
+                return Some(found);
+            }
+        }
+        let tools_dir = PathBuf::from("C:\\tools");
+        if let Some(found) = scan_dir_for_exe(&tools_dir, &target_exe, 4) {
+            return Some(found);
+        }
     }
 
     // 3. Common non-PATH Unix locations
@@ -752,9 +794,14 @@ fn find_executable(name: &str) -> Option<PathBuf> {
 
     // 3. User home bin
     if let Ok(home) = std::env::var("HOME") {
-        let home_bin = PathBuf::from(home).join(".local/bin").join(name);
+        let home_p = PathBuf::from(home);
+        let home_bin = home_p.join(".local/bin").join(name);
         if is_executable(&home_bin) {
             return Some(home_bin);
+        }
+        let torcrypt_bin = home_p.join(".local/share/torcrypt/bin");
+        if let Some(found) = scan_dir_for_exe(&torcrypt_bin, name, 4) {
+            return Some(found);
         }
     }
 

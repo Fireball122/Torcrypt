@@ -8,6 +8,7 @@ $Repo = "Fireball122/Torcrypt"
 $BinName = "torcrypt.exe"
 $ShortAlias = "dt.exe"
 $InstallDir = "$env:LOCALAPPDATA\Programs\torcrypt"
+$BinDir = Join-Path $InstallDir "bin"
 $WordlistsDir = Join-Path $InstallDir "wordlists"
 
 Write-Host ""
@@ -20,9 +21,11 @@ Write-Host ""
 Get-Process -Name "torcrypt", "torcrypt-tui", "dt" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 200
 
-# 1. Ensure Install Directory Exists
-if (!(Test-Path -Path $InstallDir)) {
-    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+# 1. Ensure Directories Exist
+foreach ($dir in @($InstallDir, $BinDir, $WordlistsDir)) {
+    if (!(Test-Path -Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
 }
 
 $TargetPath = Join-Path $InstallDir $BinName
@@ -32,7 +35,7 @@ $DownloadUrl = "https://github.com/$Repo/releases/latest/download/torcrypt-windo
 $IsUpdate = (Test-Path -Path $TargetPath)
 
 if ($IsUpdate) {
-    Write-Host "[*] Existing TORCRYPT installation detected. Fast-updating binary..." -ForegroundColor Cyan
+    Write-Host "[*] Updating TORCRYPT binary to latest release..." -ForegroundColor Cyan
 } else {
     Write-Host "[*] Downloading TORCRYPT for Windows (x86_64)..." -ForegroundColor Cyan
 }
@@ -46,7 +49,7 @@ if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
         if ((Test-Path -Path $TempFile) -and ((Get-Item -Path $TempFile).Length -gt 1000000)) {
             Move-Item -Path "$TempFile" -Destination "$TargetPath" -Force
             $Downloaded = $true
-            Write-Host "[+] Downloaded and installed release binary via curl." -ForegroundColor Green
+            Write-Host "[+] Installed latest release binary via curl." -ForegroundColor Green
         }
     } catch {
         # Fall through to PowerShell methods
@@ -61,7 +64,7 @@ if (-not $Downloaded) {
         if ((Test-Path -Path $TempFile) -and ((Get-Item -Path $TempFile).Length -gt 1000000)) {
             Move-Item -Path "$TempFile" -Destination "$TargetPath" -Force
             $Downloaded = $true
-            Write-Host "[+] Downloaded and installed release binary via WebClient." -ForegroundColor Green
+            Write-Host "[+] Installed latest release binary via WebClient." -ForegroundColor Green
         }
     } catch {
         try {
@@ -69,7 +72,7 @@ if (-not $Downloaded) {
             if ((Test-Path -Path $TempFile) -and ((Get-Item -Path $TempFile).Length -gt 1000000)) {
                 Move-Item -Path "$TempFile" -Destination "$TargetPath" -Force
                 $Downloaded = $true
-                Write-Host "[+] Downloaded and installed release binary via Invoke-WebRequest." -ForegroundColor Green
+                Write-Host "[+] Installed latest release binary via Invoke-WebRequest." -ForegroundColor Green
             }
         } catch {
             Write-Host "[!] Pre-compiled release download failed: $_" -ForegroundColor Yellow
@@ -103,176 +106,211 @@ Copy-Item $TargetPath $AliasPath -Force
 Write-Host "[+] Created shortcut: $AliasPath" -ForegroundColor Green
 
 # 3. Add to User PATH if not present
-$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($UserPath -split ";" -notcontains $InstallDir) {
-    [Environment]::SetEnvironmentVariable("Path", "$UserPath;$InstallDir", "User")
-    $env:Path += ";$InstallDir"
-    Write-Host "[*] Added $InstallDir to User PATH." -ForegroundColor Cyan
+function Add-ToUserPath {
+    param([string]$DirToAdd)
+    if (!(Test-Path -Path $DirToAdd)) { return }
+    $CurrentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $Parts = $CurrentPath -split ";"
+    if ($Parts -notcontains $DirToAdd) {
+        [Environment]::SetEnvironmentVariable("Path", "$CurrentPath;$DirToAdd", "User")
+        $env:Path += ";$DirToAdd"
+        Write-Host "[*] Added $DirToAdd to User PATH." -ForegroundColor Cyan
+    }
 }
 
-# 4. Interactive Setup Helper
-function Prompt-User {
-    param(
-        [string]$Message,
-        [string]$Default = ""
+Add-ToUserPath -DirToAdd $InstallDir
+Add-ToUserPath -DirToAdd $BinDir
+
+# 4. Helper to find installed backend executables
+function Find-BackendExecutable {
+    param([string]$Name)
+
+    # A. Check PATH
+    $cmd = Get-Command "${Name}.exe" -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+
+    # B. Check Torcrypt bin folder recursively (e.g. bin\hashcat\hashcat.exe)
+    if (Test-Path -Path $BinDir) {
+        $found = Get-ChildItem -Path $BinDir -Filter "${Name}.exe" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) { return $found.FullName }
+    }
+
+    # C. Check well-known package manager & system locations
+    $candidates = @(
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Links\${Name}.exe",
+        "$env:LOCALAPPDATA\Programs\${Name}\${Name}.exe",
+        "$env:USERPROFILE\scoop\shims\${Name}.exe",
+        "$env:USERPROFILE\scoop\apps\${Name}\current\${Name}.exe",
+        "$env:USERPROFILE\scoop\apps\${Name}\current\run\${Name}.exe",
+        "C:\ProgramData\chocolatey\bin\${Name}.exe",
+        "C:\tools\${Name}\${Name}.exe",
+        "C:\tools\${Name}\run\${Name}.exe",
+        "C:\${Name}\${Name}.exe",
+        "C:\${Name}\run\${Name}.exe",
+        "C:\Program Files\${Name}\${Name}.exe",
+        "C:\Program Files\${Name}\run\${Name}.exe",
+        "C:\Program Files (x86)\${Name}\${Name}.exe"
     )
-    try {
-        $ans = Read-Host $Message
-        if ([string]::IsNullOrWhiteSpace($ans)) {
-            return $Default
-        }
-        return $ans.Trim()
-    } catch {
-        return $Default
+    foreach ($cand in $candidates) {
+        if (Test-Path -Path $cand) { return $cand }
     }
+    return $null
 }
 
-$ReconfigRequested = ($args -contains "-Reconfigure") -or ($args -contains "-Setup") -or ($env:TORCRYPT_RECONFIGURE -eq "1")
-
-if ($IsUpdate -and -not $ReconfigRequested) {
-    Write-Host ""
-    Write-Host "[+] TORCRYPT binary updated successfully!" -ForegroundColor Green
-    Write-Host "    Existing backends and wordlists have been retained." -ForegroundColor Gray
-    Write-Host "    (To reconfigure backends or wordlists, run installer with -Reconfigure)" -ForegroundColor DarkGray
-    $RunSetup = $false
-} else {
-    $RunSetup = $true
-}
-
-if ($RunSetup) {
-    # 5. Interactive External Decryption Backends
-    Write-Host ""
-    Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
-    Write-Host "  │  STEP 1: EXTERNAL DECRYPTION GUI ENGINES (OPTIONAL)         │" -ForegroundColor Cyan
-    Write-Host "  └─────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
-Write-Host "  TORCRYPT can operate as a terminal GUI frontend for:" -ForegroundColor Gray
-Write-Host "    [1] Hashcat (GPU / OpenCL / CUDA Acceleration - Recommended)" -ForegroundColor White
-Write-Host "    [2] John the Ripper (Multi-Core SIMD & Jumbo Container Formats)" -ForegroundColor White
-Write-Host "    [3] Both Hashcat & John the Ripper" -ForegroundColor White
-Write-Host "    [4] Skip (Use built-in pure-Rust AVX2 vector engine only)" -ForegroundColor DarkGray
-Write-Host ""
-
-$ToolChoice = Prompt-User -Message "  Select an option [1-4] (Default: 3)" -Default "3"
-
-$HasWinget = [bool](Get-Command winget.exe -ErrorAction SilentlyContinue)
-$HasChoco = [bool](Get-Command choco.exe -ErrorAction SilentlyContinue)
-$HasScoop = [bool](Get-Command scoop.ps1, scoop -ErrorAction SilentlyContinue)
-
-if ($ToolChoice -in @("1", "2", "3")) {
-    if ($ToolChoice -eq "1" -or $ToolChoice -eq "3") {
-        Write-Host "[*] Installing Hashcat (GPU Acceleration)..." -ForegroundColor Cyan
-        if ($HasWinget) {
-            try {
-                & winget.exe install --id hashcat.hashcat -e --accept-package-agreements --accept-source-agreements --silent
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Host "[+] Hashcat installed successfully via winget." -ForegroundColor Green
-                } else {
-                    Write-Host "[!] Note: winget could not find hashcat.hashcat. To install, run: choco install hashcat" -ForegroundColor Yellow
-                }
-            } catch {
-                Write-Host "[!] winget install failed: $_" -ForegroundColor Yellow
-            }
-        } elseif ($HasChoco) {
-            & choco.exe install -y hashcat
-        } elseif ($HasScoop) {
-            & scoop.ps1 install hashcat
-        } else {
-            Write-Host "[!] No package manager (winget/choco/scoop) found. Install manually via: winget install hashcat.hashcat" -ForegroundColor Yellow
-        }
-    }
-
-    if ($ToolChoice -eq "2" -or $ToolChoice -eq "3") {
-        Write-Host "[*] Installing John the Ripper (Multi-Core SIMD)..." -ForegroundColor Cyan
-        if ($HasChoco) {
-            & choco.exe install -y john
-            Write-Host "[+] John the Ripper installed via Chocolatey." -ForegroundColor Green
-        } elseif ($HasScoop) {
-            & scoop.ps1 install john
-            Write-Host "[+] John the Ripper installed via Scoop." -ForegroundColor Green
-        } else {
-            Write-Host "[!] John the Ripper can be installed via: choco install john (or scoop install john)" -ForegroundColor Yellow
-        }
-    }
-} else {
-    Write-Host "[*] Skipped external backends." -ForegroundColor Gray
-}
-
-# 6. Interactive Wordlists Download
+# 5. External Decryption Backend Verification & Setup
 Write-Host ""
 Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
-Write-Host "  │  STEP 2: DICTIONARY WORDLISTS                              │" -ForegroundColor Cyan
+Write-Host "  │  STEP 1: EXTERNAL DECRYPTION ENGINES AUDIT & SETUP          │" -ForegroundColor Cyan
 Write-Host "  └─────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
-Write-Host "  TORCRYPT includes a 27K built-in corpus. Real-world wordlists" -ForegroundColor Gray
-Write-Host "  enable recovery of complex, real-world passwords:" -ForegroundColor Gray
-Write-Host "    [1] Download RockYou.txt (14.3M Passwords - ~134 MB, Industry Standard)" -ForegroundColor White
-Write-Host "    [2] Download SecLists Top-100k (~1 MB - Lightweight Quick Starter)" -ForegroundColor White
-Write-Host "    [3] Download Both RockYou & Top-100k" -ForegroundColor White
-Write-Host "    [4] Skip wordlists (use built-in dictionary or custom wordlists)" -ForegroundColor DarkGray
-Write-Host ""
 
-$WlChoice = Prompt-User -Message "  Select an option [1-4] (Default: 1)" -Default "1"
-
-$WordlistsDir = Join-Path $InstallDir "wordlists"
-if (!(Test-Path -Path $WordlistsDir)) {
-    New-Item -ItemType Directory -Path $WordlistsDir -Force | Out-Null
-}
-
-if ($WlChoice -in @("1", "2", "3")) {
-    if ($WlChoice -eq "1" -or $WlChoice -eq "3") {
-        $RockYouPath = Join-Path $WordlistsDir "rockyou.txt"
-        $RockYouUrl = "https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt"
-        Write-Host "[*] Downloading RockYou.txt (14.3M passwords, ~134 MB)..." -ForegroundColor Cyan
-        try {
-            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-                & curl.exe -fSL -o "$RockYouPath" "$RockYouUrl" --progress-bar
-            } else {
-                Invoke-WebRequest -Uri $RockYouUrl -OutFile $RockYouPath -UseBasicParsing
-            }
-            if ((Test-Path -Path $RockYouPath) -and ((Get-Item -Path $RockYouPath).Length -gt 1000000)) {
-                Write-Host "[+] Saved RockYou wordlist to: $RockYouPath" -ForegroundColor Green
-            }
-        } catch {
-            Write-Host "[!] Could not download RockYou wordlist: $_" -ForegroundColor Yellow
-        }
-    }
-
-    if ($WlChoice -eq "2" -or $WlChoice -eq "3") {
-        $Top100kPath = Join-Path $WordlistsDir "top-100000.txt"
-        $Top100kUrl = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10-million-password-list-top-100000.txt"
-        Write-Host "[*] Downloading SecLists Top-100k..." -ForegroundColor Cyan
-        try {
-            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-                & curl.exe -fSL -o "$Top100kPath" "$Top100kUrl" --silent
-            } else {
-                Invoke-WebRequest -Uri $Top100kUrl -OutFile $Top100kPath -UseBasicParsing
-            }
-            if ((Test-Path -Path $Top100kPath) -and ((Get-Item -Path $Top100kPath).Length -gt 10000)) {
-                Write-Host "[+] Saved Top-100k wordlist to: $Top100kPath" -ForegroundColor Green
-            }
-        } catch {
-            Write-Host "[!] Could not download Top-100k wordlist: $_" -ForegroundColor Yellow
-        }
-    }
+# --- HASHCAT SETUP ---
+$HashcatExe = Find-BackendExecutable -Name "hashcat"
+if ($HashcatExe) {
+    Write-Host "  [+] Hashcat (GPU Acceleration)    : DETECTED" -ForegroundColor Green
+    Write-Host "      Location: $HashcatExe" -ForegroundColor Gray
 } else {
-    Write-Host "[*] Skipped wordlists." -ForegroundColor Gray
+    Write-Host "  [*] Hashcat is not installed. Installing official portable release (v7.1.2)..." -ForegroundColor Cyan
+    $HashcatTargetDir = Join-Path $BinDir "hashcat"
+    if (!(Test-Path -Path $HashcatTargetDir)) {
+        New-Item -ItemType Directory -Path $HashcatTargetDir -Force | Out-Null
+    }
+
+    $7zrPath = Join-Path $env:TEMP "7zr.exe"
+    if (!(Test-Path -Path $7zrPath)) {
+        Write-Host "      Fetching portable 7zr extractor (~580 KB)..." -ForegroundColor Gray
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            & curl.exe -fSL -o "$7zrPath" "https://www.7-zip.org/a/7zr.exe" --silent
+        } else {
+            Invoke-WebRequest -Uri "https://www.7-zip.org/a/7zr.exe" -OutFile "$7zrPath" -UseBasicParsing
+        }
+    }
+
+    $HashcatArchive = Join-Path $env:TEMP "hashcat-7.1.2.7z"
+    Write-Host "      Downloading official Hashcat v7.1.2 archive (~19 MB)..." -ForegroundColor Gray
+    try {
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            & curl.exe -fSL -o "$HashcatArchive" "https://github.com/hashcat/hashcat/releases/download/v7.1.2/hashcat-7.1.2.7z" --progress-bar
+        } else {
+            Invoke-WebRequest -Uri "https://github.com/hashcat/hashcat/releases/download/v7.1.2/hashcat-7.1.2.7z" -OutFile "$HashcatArchive" -UseBasicParsing
+        }
+
+        if (Test-Path -Path $HashcatArchive) {
+            Write-Host "      Extracting Hashcat to $HashcatTargetDir..." -ForegroundColor Gray
+            & "$7zrPath" x "$HashcatArchive" "-o$HashcatTargetDir" -y | Out-Null
+            Remove-Item -Path "$HashcatArchive" -Force -ErrorAction SilentlyContinue
+
+            $HashcatExe = Find-BackendExecutable -Name "hashcat"
+            if ($HashcatExe) {
+                Write-Host "  [+] Hashcat installed successfully!" -ForegroundColor Green
+                Write-Host "      Location: $HashcatExe" -ForegroundColor Gray
+                Add-ToUserPath -DirToAdd (Split-Path -Parent $HashcatExe)
+            }
+        }
+    } catch {
+        Write-Host "  [!] Could not download Hashcat: $_" -ForegroundColor Yellow
+    }
 }
+
+# --- JOHN THE RIPPER SETUP ---
+$JohnExe = Find-BackendExecutable -Name "john"
+if ($JohnExe) {
+    Write-Host "  [+] John the Ripper (SIMD Engine) : DETECTED" -ForegroundColor Green
+    Write-Host "      Location: $JohnExe" -ForegroundColor Gray
+} else {
+    Write-Host "  [*] John the Ripper is not installed. Installing official Win64 Jumbo release..." -ForegroundColor Cyan
+    $JohnTargetDir = Join-Path $BinDir "john"
+    if (!(Test-Path -Path $JohnTargetDir)) {
+        New-Item -ItemType Directory -Path $JohnTargetDir -Force | Out-Null
+    }
+
+    $JohnArchive = Join-Path $env:TEMP "john_win64.zip"
+    Write-Host "      Downloading John the Ripper Jumbo v1.9.1 (~62 MB)..." -ForegroundColor Gray
+    try {
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            & curl.exe -fSL -o "$JohnArchive" "https://github.com/openwall/john-packages/releases/download/v1.9.1-ce/winX64_1_JtR.zip" --progress-bar
+        } else {
+            Invoke-WebRequest -Uri "https://github.com/openwall/john-packages/releases/download/v1.9.1-ce/winX64_1_JtR.zip" -OutFile "$JohnArchive" -UseBasicParsing
+        }
+
+        if (Test-Path -Path $JohnArchive) {
+            Write-Host "      Extracting John the Ripper to $JohnTargetDir..." -ForegroundColor Gray
+            Expand-Archive -Path "$JohnArchive" -DestinationPath "$JohnTargetDir" -Force
+            Remove-Item -Path "$JohnArchive" -Force -ErrorAction SilentlyContinue
+
+            $JohnExe = Find-BackendExecutable -Name "john"
+            if ($JohnExe) {
+                Write-Host "  [+] John the Ripper installed successfully!" -ForegroundColor Green
+                Write-Host "      Location: $JohnExe" -ForegroundColor Gray
+                Add-ToUserPath -DirToAdd (Split-Path -Parent $JohnExe)
+            }
+        }
+    } catch {
+        Write-Host "  [!] Could not download John the Ripper: $_" -ForegroundColor Yellow
+    }
 }
+
+# 6. Wordlists Setup
+Write-Host ""
+Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
+Write-Host "  │  STEP 2: DICTIONARY WORDLISTS VERIFICATION                  │" -ForegroundColor Cyan
+Write-Host "  └─────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
+
+$RockYouPath = Join-Path $WordlistsDir "rockyou.txt"
+if ((Test-Path -Path $RockYouPath) -and ((Get-Item -Path $RockYouPath).Length -gt 1000000)) {
+    Write-Host "  [+] RockYou Wordlist              : DETECTED ($([math]::Round((Get-Item -Path $RockYouPath).Length / 1MB)) MB)" -ForegroundColor Green
+} else {
+    Write-Host "  [*] Downloading RockYou.txt (14.3M passwords, ~134 MB)..." -ForegroundColor Cyan
+    $RockYouUrl = "https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt"
+    try {
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            & curl.exe -fSL -o "$RockYouPath" "$RockYouUrl" --progress-bar
+        } else {
+            Invoke-WebRequest -Uri $RockYouUrl -OutFile $RockYouPath -UseBasicParsing
+        }
+        if ((Test-Path -Path $RockYouPath) -and ((Get-Item -Path $RockYouPath).Length -gt 1000000)) {
+            Write-Host "  [+] Saved RockYou wordlist to: $RockYouPath" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "  [!] Could not download RockYou wordlist: $_" -ForegroundColor Yellow
+    }
+}
+
+$Top100kPath = Join-Path $WordlistsDir "top-100000.txt"
+if ((Test-Path -Path $Top100kPath) -and ((Get-Item -Path $Top100kPath).Length -gt 10000)) {
+    Write-Host "  [+] SecLists Top-100k Wordlist    : DETECTED" -ForegroundColor Green
+} else {
+    Write-Host "  [*] Downloading SecLists Top-100k..." -ForegroundColor Cyan
+    $Top100kUrl = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10-million-password-list-top-100000.txt"
+    try {
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            & curl.exe -fSL -o "$Top100kPath" "$Top100kUrl" --silent
+        } else {
+            Invoke-WebRequest -Uri $Top100kUrl -OutFile $Top100kPath -UseBasicParsing
+        }
+        if ((Test-Path -Path $Top100kPath) -and ((Get-Item -Path $Top100kPath).Length -gt 10000)) {
+            Write-Host "  [+] Saved Top-100k wordlist to: $Top100kPath" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "  [!] Could not download Top-100k wordlist: $_" -ForegroundColor Yellow
+    }
+}
+
 # 7. Final Summary Card
 Write-Host ""
 Write-Host "═════════════════════════════════════════════════════════════════" -ForegroundColor Green
-if ($IsUpdate) {
-    Write-Host "  [+] TORCRYPT update complete!" -ForegroundColor Green
-} else {
-    Write-Host "  [+] TORCRYPT installation complete!" -ForegroundColor Green
-}
+Write-Host "  [+] TORCRYPT setup & verification complete!" -ForegroundColor Green
 Write-Host "═════════════════════════════════════════════════════════════════" -ForegroundColor Green
 Write-Host "  Executable : $TargetPath" -ForegroundColor White
 Write-Host "  Shortcut   : dt (or torcrypt)" -ForegroundColor White
-if ($WordlistsDir -and (Test-Path -Path $WordlistsDir) -and ((Get-ChildItem -Path $WordlistsDir).Count -gt 0)) {
+Write-Host "  Backends   : " -NoNewline -ForegroundColor White
+if ($HashcatExe) { Write-Host "[Hashcat (GPU)] " -NoNewline -ForegroundColor Green }
+if ($JohnExe)    { Write-Host "[John (SIMD)] " -NoNewline -ForegroundColor Green }
+Write-Host "[Native (AVX2)]" -ForegroundColor Green
+if (Test-Path -Path $WordlistsDir) {
     Write-Host "  Wordlists  : $WordlistsDir" -ForegroundColor Cyan
 }
 Write-Host ""
-Write-Host "  Run: torcrypt  (or shorthand: dt)" -ForegroundColor Yellow
-Write-Host "  In [1 Analyze], press [E] to cycle backends (Auto / Hashcat / John / Native)" -ForegroundColor Gray
+Write-Host "  To launch: type 'torcrypt' or 'dt' in any terminal." -ForegroundColor Yellow
+Write-Host "  Click directly on [Hashcat], [John], or [Native] to select engine." -ForegroundColor Gray
 Write-Host "═════════════════════════════════════════════════════════════════" -ForegroundColor Green
 Write-Host ""
