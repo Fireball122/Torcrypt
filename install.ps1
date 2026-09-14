@@ -164,14 +164,13 @@ function Prompt-Choice {
         [bool]$DefaultYes = $true
     )
     $hint = if ($DefaultYes) { "Y/n" } else { "y/N" }
-    Write-Host ""
-    Write-Host "  [?] $PromptMessage [$hint]: " -NoNewline -ForegroundColor Yellow
     try {
         if ([Console]::IsInputRedirected) {
-            Write-Host (if ($DefaultYes) { "Y (default)" } else { "N (default)" }) -ForegroundColor Cyan
+            Write-Host "  [?] $PromptMessage [$hint]: $(if ($DefaultYes) { 'Y (default)' } else { 'N (default)' })" -ForegroundColor Cyan
             return $DefaultYes
         }
-        $resp = [Console]::ReadLine()
+        Write-Host ""
+        $resp = Read-Host "  [?] $PromptMessage [$hint]"
         if ([string]::IsNullOrWhiteSpace($resp)) {
             return $DefaultYes
         }
@@ -180,7 +179,7 @@ function Prompt-Choice {
         if ($resp -eq "n" -or $resp -eq "no")  { return $false }
         return $DefaultYes
     } catch {
-        Write-Host (if ($DefaultYes) { "Y" } else { "N" }) -ForegroundColor Cyan
+        Write-Host "  [?] $PromptMessage [$hint]: $(if ($DefaultYes) { 'Y' } else { 'N' })" -ForegroundColor Cyan
         return $DefaultYes
     }
 }

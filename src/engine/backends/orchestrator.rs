@@ -79,11 +79,35 @@ impl BackendJob {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let (tx, rx) = unbounded();
 
+        // Ensure actual_target and wordlist have absolute paths because we set current_dir to backend directory
+        let actual_target_abs = if actual_target.is_relative() {
+            std::env::current_dir().map(|cd| cd.join(&actual_target)).unwrap_or_else(|_| actual_target.to_path_buf())
+        } else {
+            actual_target.to_path_buf()
+        };
+
+        let abs_wordlist: Option<PathBuf> = wordlist.map(|w| {
+            if w.is_relative() {
+                std::env::current_dir().map(|cd| cd.join(w)).unwrap_or_else(|_| w.to_path_buf())
+            } else {
+                w.to_path_buf()
+            }
+        });
+
         let mut cmd = Command::new(backend_bin);
+        if let Some(parent) = backend_bin.parent() {
+            cmd.current_dir(parent);
+        }
 
         let mut resolved_mode: Option<u32> = None;
 
-        let pot_path = if let Ok(home) = std::env::var("HOME") {
+        let pot_path = if let Ok(lad) = std::env::var("LOCALAPPDATA") {
+            let p = std::path::PathBuf::from(lad).join("torcrypt").join("hashcat.potfile");
+            if let Some(parent) = p.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            Some(p)
+        } else if let Ok(home) = std::env::var("HOME") {
             let p = std::path::PathBuf::from(home).join(".local/share/torcrypt/hashcat.potfile");
             if let Some(parent) = p.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -114,9 +138,9 @@ impl BackendJob {
                     }
                 }
 
-                cmd.arg(&actual_target);
+                cmd.arg(&actual_target_abs);
 
-                if let Some(w) = wordlist {
+                if let Some(ref w) = abs_wordlist {
                     cmd.arg("-a").arg("0");
                     cmd.arg(w);
                     if let Some(strat) = strategy_id {
@@ -170,7 +194,7 @@ impl BackendJob {
                     }
                 }
 
-                if let Some(w) = wordlist {
+                if let Some(ref w) = abs_wordlist {
                     cmd.arg(format!("--wordlist={}", w.display()));
                     if let Some(strat) = strategy_id {
                         if strat.contains("rules") || strat.contains("best64") {
@@ -199,16 +223,16 @@ impl BackendJob {
                     cmd.arg("--stdin");
                     cmd.stdin(Stdio::piped());
                 }
-                cmd.arg(&actual_target);
+                cmd.arg(&actual_target_abs);
             }
             BackendType::Fcrackzip => {
                 cmd.arg("-u");
-                if let Some(w) = wordlist {
+                if let Some(ref w) = abs_wordlist {
                     cmd.arg("-D").arg("-p").arg(w);
                 } else {
                     cmd.arg("-b").arg("-c").arg("a").arg("-l").arg("1-6");
                 }
-                cmd.arg(&actual_target);
+                cmd.arg(&actual_target_abs);
             }
             BackendType::Native => {
                 return Err("Native engine runs in-process".into());
@@ -354,6 +378,9 @@ impl BackendJob {
                 match btype {
                     BackendType::Hashcat => {
                         let mut check_cmd = Command::new(&backend_bin_path);
+                        if let Some(parent) = backend_bin_path.parent() {
+                            check_cmd.current_dir(parent);
+                        }
                         if let Some(m) = resolved_mode {
                             check_cmd.arg("-m").arg(m.to_string());
                         }
@@ -375,7 +402,11 @@ impl BackendJob {
                         }
                     }
                     BackendType::John => {
-                        if let Ok(out) = Command::new(&backend_bin_path)
+                        let mut j_cmd = Command::new(&backend_bin_path);
+                        if let Some(parent) = backend_bin_path.parent() {
+                            j_cmd.current_dir(parent);
+                        }
+                        if let Ok(out) = j_cmd
                             .arg("--show")
                             .arg(&actual_target_clone)
                             .output()
