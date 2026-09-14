@@ -157,6 +157,34 @@ function Find-BackendExecutable {
     return $null
 }
 
+# Helper for interactive or automated prompt
+function Prompt-Choice {
+    param(
+        [string]$PromptMessage,
+        [bool]$DefaultYes = $true
+    )
+    $hint = if ($DefaultYes) { "Y/n" } else { "y/N" }
+    Write-Host ""
+    Write-Host "  [?] $PromptMessage [$hint]: " -NoNewline -ForegroundColor Yellow
+    try {
+        if ([Console]::IsInputRedirected) {
+            Write-Host (if ($DefaultYes) { "Y (default)" } else { "N (default)" }) -ForegroundColor Cyan
+            return $DefaultYes
+        }
+        $resp = [Console]::ReadLine()
+        if ([string]::IsNullOrWhiteSpace($resp)) {
+            return $DefaultYes
+        }
+        $resp = $resp.Trim().ToLower()
+        if ($resp -eq "y" -or $resp -eq "yes") { return $true }
+        if ($resp -eq "n" -or $resp -eq "no")  { return $false }
+        return $DefaultYes
+    } catch {
+        Write-Host (if ($DefaultYes) { "Y" } else { "N" }) -ForegroundColor Cyan
+        return $DefaultYes
+    }
+}
+
 # 5. External Decryption Backend Verification & Setup
 Write-Host ""
 Write-Host "  ┌─────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
@@ -169,45 +197,51 @@ if ($HashcatExe) {
     Write-Host "  [+] Hashcat (GPU Acceleration)    : DETECTED" -ForegroundColor Green
     Write-Host "      Location: $HashcatExe" -ForegroundColor Gray
 } else {
-    Write-Host "  [*] Hashcat is not installed. Installing official portable release (v7.1.2)..." -ForegroundColor Cyan
-    $HashcatTargetDir = Join-Path $BinDir "hashcat"
-    if (!(Test-Path -Path $HashcatTargetDir)) {
-        New-Item -ItemType Directory -Path $HashcatTargetDir -Force | Out-Null
-    }
-
-    $7zrPath = Join-Path $env:TEMP "7zr.exe"
-    if (!(Test-Path -Path $7zrPath)) {
-        Write-Host "      Fetching portable 7zr extractor (~580 KB)..." -ForegroundColor Gray
-        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-            & curl.exe -fSL -o "$7zrPath" "https://www.7-zip.org/a/7zr.exe" --silent
-        } else {
-            Invoke-WebRequest -Uri "https://www.7-zip.org/a/7zr.exe" -OutFile "$7zrPath" -UseBasicParsing
-        }
-    }
-
-    $HashcatArchive = Join-Path $env:TEMP "hashcat-7.1.2.7z"
-    Write-Host "      Downloading official Hashcat v7.1.2 archive (~19 MB)..." -ForegroundColor Gray
-    try {
-        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-            & curl.exe -fSL -o "$HashcatArchive" "https://github.com/hashcat/hashcat/releases/download/v7.1.2/hashcat-7.1.2.7z" --progress-bar
-        } else {
-            Invoke-WebRequest -Uri "https://github.com/hashcat/hashcat/releases/download/v7.1.2/hashcat-7.1.2.7z" -OutFile "$HashcatArchive" -UseBasicParsing
+    Write-Host "  [-] Hashcat (GPU Acceleration)    : NOT DETECTED" -ForegroundColor Yellow
+    $DoInstallHc = Prompt-Choice -PromptMessage "Download & install official portable Hashcat v7.1.2 (~19 MB)?" -DefaultYes $true
+    if ($DoInstallHc) {
+        Write-Host "  [*] Installing official portable Hashcat..." -ForegroundColor Cyan
+        $HashcatTargetDir = Join-Path $BinDir "hashcat"
+        if (!(Test-Path -Path $HashcatTargetDir)) {
+            New-Item -ItemType Directory -Path $HashcatTargetDir -Force | Out-Null
         }
 
-        if (Test-Path -Path $HashcatArchive) {
-            Write-Host "      Extracting Hashcat to $HashcatTargetDir..." -ForegroundColor Gray
-            & "$7zrPath" x "$HashcatArchive" "-o$HashcatTargetDir" -y | Out-Null
-            Remove-Item -Path "$HashcatArchive" -Force -ErrorAction SilentlyContinue
-
-            $HashcatExe = Find-BackendExecutable -Name "hashcat"
-            if ($HashcatExe) {
-                Write-Host "  [+] Hashcat installed successfully!" -ForegroundColor Green
-                Write-Host "      Location: $HashcatExe" -ForegroundColor Gray
-                Add-ToUserPath -DirToAdd (Split-Path -Parent $HashcatExe)
+        $7zrPath = Join-Path $env:TEMP "7zr.exe"
+        if (!(Test-Path -Path $7zrPath)) {
+            Write-Host "      Fetching portable 7zr extractor (~580 KB)..." -ForegroundColor Gray
+            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                & curl.exe -fSL -o "$7zrPath" "https://www.7-zip.org/a/7zr.exe" --silent
+            } else {
+                Invoke-WebRequest -Uri "https://www.7-zip.org/a/7zr.exe" -OutFile "$7zrPath" -UseBasicParsing
             }
         }
-    } catch {
-        Write-Host "  [!] Could not download Hashcat: $_" -ForegroundColor Yellow
+
+        $HashcatArchive = Join-Path $env:TEMP "hashcat-7.1.2.7z"
+        Write-Host "      Downloading official Hashcat v7.1.2 archive (~19 MB)..." -ForegroundColor Gray
+        try {
+            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                & curl.exe -fSL -o "$HashcatArchive" "https://github.com/hashcat/hashcat/releases/download/v7.1.2/hashcat-7.1.2.7z" --progress-bar
+            } else {
+                Invoke-WebRequest -Uri "https://github.com/hashcat/hashcat/releases/download/v7.1.2/hashcat-7.1.2.7z" -OutFile "$HashcatArchive" -UseBasicParsing
+            }
+
+            if (Test-Path -Path $HashcatArchive) {
+                Write-Host "      Extracting Hashcat to $HashcatTargetDir..." -ForegroundColor Gray
+                & "$7zrPath" x "$HashcatArchive" "-o$HashcatTargetDir" -y | Out-Null
+                Remove-Item -Path "$HashcatArchive" -Force -ErrorAction SilentlyContinue
+
+                $HashcatExe = Find-BackendExecutable -Name "hashcat"
+                if ($HashcatExe) {
+                    Write-Host "  [+] Hashcat installed successfully!" -ForegroundColor Green
+                    Write-Host "      Location: $HashcatExe" -ForegroundColor Gray
+                    Add-ToUserPath -DirToAdd (Split-Path -Parent $HashcatExe)
+                }
+            }
+        } catch {
+            Write-Host "  [!] Could not download Hashcat: $_" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  [*] Skipped Hashcat installation." -ForegroundColor Gray
     }
 }
 
@@ -217,35 +251,41 @@ if ($JohnExe) {
     Write-Host "  [+] John the Ripper (SIMD Engine) : DETECTED" -ForegroundColor Green
     Write-Host "      Location: $JohnExe" -ForegroundColor Gray
 } else {
-    Write-Host "  [*] John the Ripper is not installed. Installing official Win64 Jumbo release..." -ForegroundColor Cyan
-    $JohnTargetDir = Join-Path $BinDir "john"
-    if (!(Test-Path -Path $JohnTargetDir)) {
-        New-Item -ItemType Directory -Path $JohnTargetDir -Force | Out-Null
-    }
-
-    $JohnArchive = Join-Path $env:TEMP "john_win64.zip"
-    Write-Host "      Downloading John the Ripper Jumbo v1.9.1 (~62 MB)..." -ForegroundColor Gray
-    try {
-        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-            & curl.exe -fSL -o "$JohnArchive" "https://github.com/openwall/john-packages/releases/download/v1.9.1-ce/winX64_1_JtR.zip" --progress-bar
-        } else {
-            Invoke-WebRequest -Uri "https://github.com/openwall/john-packages/releases/download/v1.9.1-ce/winX64_1_JtR.zip" -OutFile "$JohnArchive" -UseBasicParsing
+    Write-Host "  [-] John the Ripper (SIMD Engine) : NOT DETECTED" -ForegroundColor Yellow
+    $DoInstallJohn = Prompt-Choice -PromptMessage "Download & install official portable Win64 John the Ripper Jumbo (~62 MB)?" -DefaultYes $true
+    if ($DoInstallJohn) {
+        Write-Host "  [*] Installing official Win64 John the Ripper Jumbo..." -ForegroundColor Cyan
+        $JohnTargetDir = Join-Path $BinDir "john"
+        if (!(Test-Path -Path $JohnTargetDir)) {
+            New-Item -ItemType Directory -Path $JohnTargetDir -Force | Out-Null
         }
 
-        if (Test-Path -Path $JohnArchive) {
-            Write-Host "      Extracting John the Ripper to $JohnTargetDir..." -ForegroundColor Gray
-            Expand-Archive -Path "$JohnArchive" -DestinationPath "$JohnTargetDir" -Force
-            Remove-Item -Path "$JohnArchive" -Force -ErrorAction SilentlyContinue
-
-            $JohnExe = Find-BackendExecutable -Name "john"
-            if ($JohnExe) {
-                Write-Host "  [+] John the Ripper installed successfully!" -ForegroundColor Green
-                Write-Host "      Location: $JohnExe" -ForegroundColor Gray
-                Add-ToUserPath -DirToAdd (Split-Path -Parent $JohnExe)
+        $JohnArchive = Join-Path $env:TEMP "john_win64.zip"
+        Write-Host "      Downloading John the Ripper Jumbo v1.9.1 (~62 MB)..." -ForegroundColor Gray
+        try {
+            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                & curl.exe -fSL -o "$JohnArchive" "https://github.com/openwall/john-packages/releases/download/v1.9.1-ce/winX64_1_JtR.zip" --progress-bar
+            } else {
+                Invoke-WebRequest -Uri "https://github.com/openwall/john-packages/releases/download/v1.9.1-ce/winX64_1_JtR.zip" -OutFile "$JohnArchive" -UseBasicParsing
             }
+
+            if (Test-Path -Path $JohnArchive) {
+                Write-Host "      Extracting John the Ripper to $JohnTargetDir..." -ForegroundColor Gray
+                Expand-Archive -Path "$JohnArchive" -DestinationPath "$JohnTargetDir" -Force
+                Remove-Item -Path "$JohnArchive" -Force -ErrorAction SilentlyContinue
+
+                $JohnExe = Find-BackendExecutable -Name "john"
+                if ($JohnExe) {
+                    Write-Host "  [+] John the Ripper installed successfully!" -ForegroundColor Green
+                    Write-Host "      Location: $JohnExe" -ForegroundColor Gray
+                    Add-ToUserPath -DirToAdd (Split-Path -Parent $JohnExe)
+                }
+            }
+        } catch {
+            Write-Host "  [!] Could not download John the Ripper: $_" -ForegroundColor Yellow
         }
-    } catch {
-        Write-Host "  [!] Could not download John the Ripper: $_" -ForegroundColor Yellow
+    } else {
+        Write-Host "  [*] Skipped John the Ripper installation." -ForegroundColor Gray
     }
 }
 
@@ -259,19 +299,25 @@ $RockYouPath = Join-Path $WordlistsDir "rockyou.txt"
 if ((Test-Path -Path $RockYouPath) -and ((Get-Item -Path $RockYouPath).Length -gt 1000000)) {
     Write-Host "  [+] RockYou Wordlist              : DETECTED ($([math]::Round((Get-Item -Path $RockYouPath).Length / 1MB)) MB)" -ForegroundColor Green
 } else {
-    Write-Host "  [*] Downloading RockYou.txt (14.3M passwords, ~134 MB)..." -ForegroundColor Cyan
-    $RockYouUrl = "https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt"
-    try {
-        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-            & curl.exe -fSL -o "$RockYouPath" "$RockYouUrl" --progress-bar
-        } else {
-            Invoke-WebRequest -Uri $RockYouUrl -OutFile $RockYouPath -UseBasicParsing
+    Write-Host "  [-] RockYou Wordlist (14.3M Passwords) : NOT DETECTED" -ForegroundColor Yellow
+    $DoDownloadRy = Prompt-Choice -PromptMessage "Download RockYou.txt dictionary (~134 MB)?" -DefaultYes $true
+    if ($DoDownloadRy) {
+        Write-Host "  [*] Downloading RockYou.txt (14.3M passwords, ~134 MB)..." -ForegroundColor Cyan
+        $RockYouUrl = "https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt"
+        try {
+            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                & curl.exe -fSL -o "$RockYouPath" "$RockYouUrl" --progress-bar
+            } else {
+                Invoke-WebRequest -Uri $RockYouUrl -OutFile $RockYouPath -UseBasicParsing
+            }
+            if ((Test-Path -Path $RockYouPath) -and ((Get-Item -Path $RockYouPath).Length -gt 1000000)) {
+                Write-Host "  [+] Saved RockYou wordlist to: $RockYouPath" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "  [!] Could not download RockYou wordlist: $_" -ForegroundColor Yellow
         }
-        if ((Test-Path -Path $RockYouPath) -and ((Get-Item -Path $RockYouPath).Length -gt 1000000)) {
-            Write-Host "  [+] Saved RockYou wordlist to: $RockYouPath" -ForegroundColor Green
-        }
-    } catch {
-        Write-Host "  [!] Could not download RockYou wordlist: $_" -ForegroundColor Yellow
+    } else {
+        Write-Host "  [*] Skipped RockYou wordlist." -ForegroundColor Gray
     }
 }
 
@@ -279,19 +325,25 @@ $Top100kPath = Join-Path $WordlistsDir "top-100000.txt"
 if ((Test-Path -Path $Top100kPath) -and ((Get-Item -Path $Top100kPath).Length -gt 10000)) {
     Write-Host "  [+] SecLists Top-100k Wordlist    : DETECTED" -ForegroundColor Green
 } else {
-    Write-Host "  [*] Downloading SecLists Top-100k..." -ForegroundColor Cyan
-    $Top100kUrl = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10-million-password-list-top-100000.txt"
-    try {
-        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-            & curl.exe -fSL -o "$Top100kPath" "$Top100kUrl" --silent
-        } else {
-            Invoke-WebRequest -Uri $Top100kUrl -OutFile $Top100kPath -UseBasicParsing
+    Write-Host "  [-] SecLists Top-100k Wordlist    : NOT DETECTED" -ForegroundColor Yellow
+    $DoDownload100k = Prompt-Choice -PromptMessage "Download SecLists Top-100k wordlist (~1 MB)?" -DefaultYes $true
+    if ($DoDownload100k) {
+        Write-Host "  [*] Downloading SecLists Top-100k..." -ForegroundColor Cyan
+        $Top100kUrl = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10-million-password-list-top-100000.txt"
+        try {
+            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                & curl.exe -fSL -o "$Top100kPath" "$Top100kUrl" --silent
+            } else {
+                Invoke-WebRequest -Uri $Top100kUrl -OutFile $Top100kPath -UseBasicParsing
+            }
+            if ((Test-Path -Path $Top100kPath) -and ((Get-Item -Path $Top100kPath).Length -gt 10000)) {
+                Write-Host "  [+] Saved Top-100k wordlist to: $Top100kPath" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "  [!] Could not download Top-100k wordlist: $_" -ForegroundColor Yellow
         }
-        if ((Test-Path -Path $Top100kPath) -and ((Get-Item -Path $Top100kPath).Length -gt 10000)) {
-            Write-Host "  [+] Saved Top-100k wordlist to: $Top100kPath" -ForegroundColor Green
-        }
-    } catch {
-        Write-Host "  [!] Could not download Top-100k wordlist: $_" -ForegroundColor Yellow
+    } else {
+        Write-Host "  [*] Skipped Top-100k wordlist." -ForegroundColor Gray
     }
 }
 

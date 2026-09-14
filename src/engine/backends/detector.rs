@@ -447,8 +447,9 @@ impl BackendCatalog {
             }
         }
 
-        // 6. Wi-Fi Captures (.pcap, .22000, .hccapx)
-        if ext == "22000" || ext == "hccapx" || ext == "pcap" || ext == "pcapng" || c.contains("wpa") || c.contains("pmkid") {
+        // 6. Wi-Fi Captures (.22000, .hccapx, or confirmed WPA/EAPOL/PMKID)
+        let is_wifi_hash = ext == "22000" || ext == "hccapx" || c.contains("wpa") || c.contains("pmkid") || c.contains("eapol");
+        if is_wifi_hash {
             if self.hashcat.is_some() {
                 return BackendRecommendation {
                     suggested: BackendType::Hashcat,

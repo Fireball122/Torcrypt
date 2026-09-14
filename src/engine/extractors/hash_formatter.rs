@@ -14,13 +14,34 @@ pub fn format_archive_hash(target_path: &Path) -> Option<String> {
         .unwrap_or("")
         .to_lowercase();
 
-    match ext.as_str() {
+    let res = match ext.as_str() {
         "zip" | "jar" => format_zip_hash(target_path),
         "pdf"         => format_pdf_hash(target_path),
         "7z"          => format_7z_hash(target_path),
         "rar"         => format_rar5_hash(target_path),
+        "pcap" | "pcapng" | "cap" | "22000" | "hc22000" | "hccapx" => {
+            super::pcap::extract_pcap_wpa_hash(target_path)
+        }
         _             => None,
+    };
+    if res.is_some() {
+        return res;
     }
+
+    // Fallback: check magic header for PCAP / PCAPNG if extension is unknown or missing
+    if let Ok(mut f) = File::open(target_path) {
+        let mut magic = [0u8; 4];
+        if f.read_exact(&mut magic).is_ok() {
+            if magic == [0xD4, 0xC3, 0xB2, 0xA1]
+                || magic == [0xA1, 0xB2, 0xC3, 0xD4]
+                || magic == [0x4D, 0x3C, 0xB2, 0xA1]
+                || magic == [0x0A, 0x0D, 0x0D, 0x0A]
+            {
+                return super::pcap::extract_pcap_wpa_hash(target_path);
+            }
+        }
+    }
+    None
 }
 
 // ─── ZIP Format ($zip2$) ───────────────────────────────────────────────────────

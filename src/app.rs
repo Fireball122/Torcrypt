@@ -1890,114 +1890,61 @@ fn analyze_file_magic(path: &Path, size_bytes: u64, gpu_available: bool) -> File
             1
         };
 
-        let has_http_digest = filename.contains("digest") || slice.windows(15).any(|w| w == b"Digest username");
-        let has_http_basic = filename.contains("http") || filename.contains("basic_auth") || slice.windows(15).any(|w| w == b"Authorization: " || w == b"Basic ");
-        let has_ftp_traffic = filename.contains("ftp") || filename.contains("auth_traffic") || slice.windows(5).any(|w| w == b"USER " || w == b"PASS ");
-        let has_tls_handshake = slice.windows(3).any(|w| w == [0x16, 0x03, 0x01] || w == [0x16, 0x03, 0x03]);
-        let has_tls_appdata   = slice.windows(3).any(|w| w == [0x17, 0x03, 0x03]);
-        let is_tls_stream     = (has_tls_handshake || has_tls_appdata || filename.contains("tls") || filename.contains("https")) && !filename.contains("wpa");
-        let is_pmkid          = filename.contains("pmkid") || (slice.windows(4).any(|w| w == [0x30, 0x14, 0x01, 0x00]));
-        let has_eapol         = slice.windows(2).any(|w| w == [0x88, 0x8E]) || link_type == 105 || link_type == 127 || filename.contains("wpa") || filename.contains("handshake");
+        // Run in-process PCAP / PCAPNG deep inspection
+        let pcap_insp = crate::engine::extractors::pcap::inspect_pcap_file(path);
 
-        if has_http_digest {
-            return FileAnalysis {
-                file_path: path.to_string_lossy().to_string(),
-                file_size: size_bytes,
-                mime_type: "application/vnd.tcpdump.pcap (HTTP Digest Auth Stream)".into(),
-                is_encrypted: true,
-                lock_type: "HTTP Digest Authentication (RFC 7616 MD5 Challenge-Response)".into(),
-                entropy,
-                magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
-                recommended_attack: "Extract & Verify MD5 Challenge Response Parameters".into(),
-                recommended_engine: ComputeEngine::PcapInspect,
-                ready_to_crack: true,
-            };
-        } else if has_http_basic {
-            return FileAnalysis {
-                file_path: path.to_string_lossy().to_string(),
-                file_size: size_bytes,
-                mime_type: "application/vnd.tcpdump.pcap (HTTP Basic Auth Stream)".into(),
-                is_encrypted: true,
-                lock_type: "HTTP Basic Authentication (RFC 7617 Base64 Authorization)".into(),
-                entropy,
-                magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
-                recommended_attack: "Extract & Decode Base64 HTTP Authorization Header".into(),
-                recommended_engine: ComputeEngine::PcapInspect,
-                ready_to_crack: true,
-            };
-        } else if has_ftp_traffic {
-            return FileAnalysis {
-                file_path: path.to_string_lossy().to_string(),
-                file_size: size_bytes,
-                mime_type: "application/vnd.tcpdump.pcap (FTP RFC 959 Auth Stream)".into(),
-                is_encrypted: true,
-                lock_type: "FTP Cleartext Authentication Stream (USER / PASS Tokens)".into(),
-                entropy,
-                magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
-                recommended_attack: "Extract Plaintext FTP Command Tokens from TCP Stream".into(),
-                recommended_engine: ComputeEngine::PcapInspect,
-                ready_to_crack: true,
-            };
-        } else if is_tls_stream {
-            return FileAnalysis {
-                file_path: path.to_string_lossy().to_string(),
-                file_size: size_bytes,
-                mime_type: "application/vnd.tcpdump.pcap (Ethernet / TLS 1.3 Stream)".into(),
-                is_encrypted: true,
-                lock_type: "TLS 1.3 (TLS_AES_256_GCM_SHA384 / TLS_CHACHA20_POLY1305)".into(),
-                entropy,
-                magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
-                recommended_attack: "Pair with SSLKEYLOGFILE (sslkeylog.log) to decrypt HTTP stream".into(),
-                recommended_engine: ComputeEngine::TlsKeylog,
-                ready_to_crack: true,
-            };
-        } else if is_pmkid {
-            return FileAnalysis {
-                file_path: path.to_string_lossy().to_string(),
-                file_size: size_bytes,
-                mime_type: "application/vnd.tcpdump.pcap (IEEE 802.11 RSN PMKID Capture)".into(),
-                is_encrypted: true,
-                lock_type: "WPA2 PMKID RSN IE Tag 48 (Hashcat Mode 22000 / 16800)".into(),
-                entropy,
-                magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
-                recommended_attack: "Convert with hcxpcapngtool -o out.22000 <file>, then: hashcat -m 22000 out.22000 wordlist".into(),
-                recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
-                ready_to_crack: true,
-            };
-        } else if has_eapol {
-            let is_direct_hc = is_hccapx || filename.ends_with(".22000");
-            let rec_att = if is_direct_hc {
-                "Converted Hash Ready: Launch GPU Hashcat Mode 22000 Recovery".into()
-            } else {
-                "Convert capture via hcxpcapngtool -o out.22000 <file>, then load .22000 in Torcrypt".into()
-            };
+        if let Some(insp) = pcap_insp {
+            if let Some(ref wpa_hash) = insp.hashcat_22000 {
+                let is_pmkid = insp.has_pmkid;
+                let lock_desc = if is_pmkid {
+                    "WPA2 PMKID RSN IE (Hashcat Mode 22000)".to_string()
+                } else {
+                    "WPA2 EAPOL 4-Way Handshake (Hashcat Mode 22000)".to_string()
+                };
+                let ssid_str = insp.ssid.as_deref().unwrap_or("Unknown SSID");
+                return FileAnalysis {
+                    file_path: path.to_string_lossy().to_string(),
+                    file_size: size_bytes,
+                    mime_type: "application/vnd.tcpdump.pcap (Wi-Fi 802.11 WPA Handshake)".into(),
+                    is_encrypted: true,
+                    lock_type: lock_desc,
+                    entropy,
+                    magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
+                    recommended_attack: format!("SSID: \"{}\" │ Handshake Extracted -> Launch GPU Hashcat Mode 22000", ssid_str),
+                    recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
+                    ready_to_crack: true,
+                };
+            }
 
-            return FileAnalysis {
-                file_path: path.to_string_lossy().to_string(),
-                file_size: size_bytes,
-                mime_type: "application/vnd.tcpdump.pcap (IEEE 802.11 Wireless Frame)".into(),
-                is_encrypted: true,
-                lock_type: "EAPOL 4-Way Handshake Captured".into(),
-                entropy,
-                magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else if is_hccapx { "HCPX (Hashcat 22000)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
-                recommended_attack: rec_att,
-                recommended_engine: if gpu_available { ComputeEngine::GpuPrimary } else { ComputeEngine::CpuSimd },
-                ready_to_crack: is_direct_hc,
-            };
-        } else {
-            return FileAnalysis {
-                file_path: path.to_string_lossy().to_string(),
-                file_size: size_bytes,
-                mime_type: "application/vnd.tcpdump.pcap (Raw Network Packet Capture)".into(),
-                is_encrypted: true,
-                lock_type: "Network Protocol Stream (Ethernet / TCP / IP)".into(),
-                entropy,
-                magic_header: format!("D4 C3 B2 A1 (LinkType {})", link_type),
-                recommended_attack: "Inspect Plaintext Protocols (HTTP/FTP/Telnet/DNS)".into(),
-                recommended_engine: ComputeEngine::PcapInspect,
-                ready_to_crack: true,
-            };
+            if let Some((ref user, ref pass)) = insp.plaintext_account {
+                return FileAnalysis {
+                    file_path: path.to_string_lossy().to_string(),
+                    file_size: size_bytes,
+                    mime_type: "application/vnd.tcpdump.pcap (Authentication Protocol Stream)".into(),
+                    is_encrypted: false,
+                    lock_type: format!("Plaintext Authentication: User \"{}\"", user),
+                    entropy,
+                    magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
+                    recommended_attack: format!("Decrypted In-Process: User=\"{}\" Password=\"{}\"", user, pass),
+                    recommended_engine: ComputeEngine::PcapInspect,
+                    ready_to_crack: true,
+                };
+            }
         }
+
+        // Generic packet capture with no handshakes or auth streams
+        return FileAnalysis {
+            file_path: path.to_string_lossy().to_string(),
+            file_size: size_bytes,
+            mime_type: "application/vnd.tcpdump.pcap (Raw Network Packet Capture)".into(),
+            is_encrypted: false,
+            lock_type: "Unencrypted Network Packet Stream".into(),
+            entropy,
+            magic_header: if is_pcapng { "0A 0D 0D 0A (PCAPNG)".into() } else { format!("D4 C3 B2 A1 (LinkType {})", link_type) },
+            recommended_attack: "Capture does not contain WPA2 handshakes, PMKID, or auth sessions (ready_to_crack: false)".into(),
+            recommended_engine: ComputeEngine::PcapInspect,
+            ready_to_crack: false,
+        };
     }
 
     // ── 2. ZIP Archives (ZipCrypto, WinZip AES-128/192/256 via In-Process Extractor) ─

@@ -5,6 +5,7 @@ pub mod keepass;
 pub mod pdf;
 pub mod seven_zip;
 pub mod zip;
+pub mod pcap;
 pub mod hash_formatter;
 pub use hash_formatter::format_archive_hash;
 
